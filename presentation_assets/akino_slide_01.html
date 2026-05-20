@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AKINO — титульный слайд</title>
+  <style>
+    @font-face {
+      font-family: "Orelega One";
+      src: url("../fonts/OrelegaOne-Regular.ttf") format("truetype");
+      font-weight: 400;
+    }
+
+    @font-face {
+      font-family: "Manrope";
+      src: url("../fonts/Manrope.ttf") format("truetype");
+      font-weight: 200 800;
+    }
+
+    :root {
+      --ink: #080A0F;
+      --gold: #E6C591;
+      --red: #C21313;
+      --muted: rgba(230, 197, 145, 0.72);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #e9e9e9;
+      font-family: "Manrope", Arial, sans-serif;
+    }
+
+    .slide {
+      position: relative;
+      width: 1600px;
+      height: 900px;
+      overflow: hidden;
+      color: var(--gold);
+      background:
+        linear-gradient(180deg, rgba(194, 19, 19, 0.78) 0%, rgba(87, 18, 18, 0.62) 14%, rgba(8, 10, 15, 0) 38%),
+        radial-gradient(circle at 82% 24%, rgba(194, 19, 19, 0.24), transparent 30%),
+        linear-gradient(180deg, #10131b 0%, var(--ink) 28%, #050609 100%);
+      border: 3px solid var(--red);
+      border-radius: 10px;
+      box-shadow: 0 26px 48px rgba(0, 0, 0, 0.48);
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(230, 197, 145, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(230, 197, 145, 0.025) 1px, transparent 1px);
+      background-size: 80px 80px;
+      mask-image: linear-gradient(180deg, transparent 0%, black 18%, black 82%, transparent 100%);
+      pointer-events: none;
+    }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      inset: 26px;
+      border: 1px solid rgba(230, 197, 145, 0.17);
+      border-radius: 7px;
+      pointer-events: none;
+    }
+
+    .logo {
+      position: absolute;
+      left: 126px;
+      top: 78px;
+      width: 270px;
+      height: auto;
+      filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.7));
+    }
+
+    .kicker {
+      position: absolute;
+      left: 126px;
+      top: 255px;
+      margin: 0;
+      font-size: 26px;
+      line-height: 1;
+      font-weight: 650;
+      color: var(--muted);
+      letter-spacing: 0;
+    }
+
+    h1 {
+      position: absolute;
+      left: 126px;
+      top: 326px;
+      width: 720px;
+      margin: 0;
+      font-family: "Orelega One", Georgia, serif;
+      font-size: 70px;
+      line-height: 1.02;
+      font-weight: 400;
+      letter-spacing: 0;
+      color: var(--gold);
+      text-shadow: 0 5px 0 rgba(0, 0, 0, 0.75);
+    }
+
+    .mark {
+      position: absolute;
+      right: 132px;
+      top: 292px;
+      width: 442px;
+      height: 126px;
+      display: flex;
+      align-items: center;
+      gap: 26px;
+      padding: 0 34px;
+      background:
+        linear-gradient(135deg, rgba(194, 19, 19, 0.96), rgba(69, 12, 13, 0.92)),
+        var(--red);
+      border: 1px solid rgba(230, 197, 145, 0.26);
+      border-radius: 8px;
+      box-shadow: 0 18px 28px rgba(0, 0, 0, 0.32);
+    }
+
+    .mark strong {
+      font-family: "Orelega One", Georgia, serif;
+      font-size: 42px;
+      line-height: 1;
+      font-weight: 400;
+      text-shadow: 0 3px 0 rgba(0, 0, 0, 0.55);
+    }
+
+    .mark span {
+      max-width: 205px;
+      font-size: 19px;
+      line-height: 1.25;
+      font-weight: 650;
+      color: rgba(230, 197, 145, 0.82);
+    }
+
+    .poster-wall {
+      position: absolute;
+      right: 132px;
+      bottom: 116px;
+      width: 520px;
+      height: 330px;
+    }
+
+    .poster {
+      position: absolute;
+      width: 142px;
+      border-radius: 7px;
+      background:
+        linear-gradient(180deg, rgba(230, 197, 145, 0.12), rgba(230, 197, 145, 0.02)),
+        #111720;
+      border: 1px solid rgba(230, 197, 145, 0.16);
+      box-shadow: 0 18px 26px rgba(0, 0, 0, 0.28);
+    }
+
+    .poster::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 18px;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(230, 197, 145, 0.32);
+    }
+
+    .poster::after {
+      content: "";
+      position: absolute;
+      left: 16px;
+      bottom: 35px;
+      width: 82px;
+      height: 5px;
+      border-radius: 999px;
+      background: rgba(194, 19, 19, 0.68);
+    }
+
+    .poster:nth-child(1) {
+      left: 0;
+      top: 34px;
+      height: 196px;
+    }
+
+    .poster:nth-child(2) {
+      left: 174px;
+      top: 0;
+      height: 214px;
+    }
+
+    .poster:nth-child(3) {
+      right: 0;
+      top: 42px;
+      height: 190px;
+    }
+
+    .poster:nth-child(4) {
+      left: 66px;
+      bottom: 0;
+      height: 116px;
+      opacity: 0.72;
+    }
+
+    .poster:nth-child(5) {
+      left: 240px;
+      bottom: 0;
+      height: 148px;
+      opacity: 0.82;
+    }
+
+    .meta {
+      position: absolute;
+      left: 126px;
+      bottom: 96px;
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      font-size: 24px;
+      line-height: 1.2;
+      font-weight: 550;
+      color: rgba(230, 197, 145, 0.82);
+    }
+
+    .meta::before {
+      content: "";
+      width: 78px;
+      height: 3px;
+      background: var(--red);
+      box-shadow: 0 0 18px rgba(194, 19, 19, 0.55);
+    }
+
+    .corner {
+      position: absolute;
+      right: 80px;
+      bottom: 64px;
+      font-size: 92px;
+      line-height: 1;
+      font-family: "Orelega One", Georgia, serif;
+      color: rgba(230, 197, 145, 0.055);
+    }
+  </style>
+</head>
+<body>
+  <main class="slide" aria-label="Титульный слайд AKINO">
+    <img class="logo" src="../public/logo.svg" alt="AKINO">
+    <p class="kicker">Дипломная работа</p>
+    <h1>Разработка онлайн-кинотеатра для авторских и короткометражных фильмов</h1>
+
+    <div class="mark">
+      <strong>AKINO</strong>
+      <span>сервис для авторского и короткого кино</span>
+    </div>
+
+    <div class="poster-wall" aria-hidden="true">
+      <div class="poster"></div>
+      <div class="poster"></div>
+      <div class="poster"></div>
+      <div class="poster"></div>
+      <div class="poster"></div>
+    </div>
+
+    <div class="meta">Онлайн-кинотеатр для авторского и короткого кино · 2026</div>
+    <div class="corner">01</div>
+  </main>
+</body>
+</html>

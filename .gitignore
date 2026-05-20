@@ -1,0 +1,15 @@
+/tests/artifacts/*
+!/tests/artifacts/.gitignore
+
+.env
+.env.*
+!.env.example
+*.local.php
+
+*.log
+*.tmp
+Thumbs.db
+.DS_Store
+
+/vendor/
+/node_modules/
