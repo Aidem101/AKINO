@@ -3275,13 +3275,11 @@ a {
 
   .film-slider.is-native-mobile-slider {
     justify-content: flex-start;
-    overflow-x: auto;
+    overflow-x: hidden;
     overflow-y: hidden;
-    scroll-snap-type: x mandatory;
-    scrollbar-width: none;
   }
 
-  .film-slider.is-native-mobile-slider::-webkit-scrollbar {
+  .film-slider.is-native-mobile-slider .film-track::-webkit-scrollbar {
     display: none;
   }
 
@@ -3289,6 +3287,11 @@ a {
     transform: none !important;
     transition: none;
     gap: 12px;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
   }
 
   .film-card {
