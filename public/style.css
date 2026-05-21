@@ -3293,7 +3293,10 @@ a {
     transform: none !important;
     transition: none;
     gap: 12px;
-    width: 100%;
+    width: calc(100% + 60px);
+    margin-left: -30px;
+    padding: 0 30px;
+    box-sizing: border-box;
     overflow-x: auto;
     overflow-y: hidden;
     scroll-snap-type: x mandatory;
@@ -3302,6 +3305,8 @@ a {
 
   .film-card {
     width: min(78vw, 330px) !important;
+    height: calc(100% - 12px);
+    box-sizing: border-box;
     scroll-snap-align: center;
   }
 
