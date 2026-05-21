@@ -242,6 +242,14 @@
 
     if (window.innerWidth <= 700) {
       track.parentElement?.classList.add('is-native-mobile-slider');
+      requestAnimationFrame(() => {
+        const activeCard = cards[1] || cards[0];
+
+        activeCard.scrollIntoView({
+          block: 'nearest',
+          inline: 'center',
+        });
+      });
       return;
     }
 

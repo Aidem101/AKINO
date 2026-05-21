@@ -3292,22 +3292,22 @@ a {
   .film-slider.is-native-mobile-slider .film-track {
     transform: none !important;
     transition: none;
-    gap: 8px;
+    gap: 12px;
     width: 100%;
     margin-left: 0;
-    padding: 0 max(24px, calc((100vw - min(78vw, 330px)) / 2));
+    padding: 0;
     box-sizing: border-box;
     align-items: center;
     overflow-x: auto;
     overflow-y: hidden;
     scroll-snap-type: x mandatory;
-    scroll-padding-inline: max(24px, calc((100vw - min(78vw, 330px)) / 2));
+    scroll-padding-inline: 0;
     scrollbar-width: none;
   }
 
   .film-card {
     width: min(78vw, 330px) !important;
-    height: calc(100% - 18px);
+    height: calc(100% - 12px);
     box-sizing: border-box;
     scroll-snap-align: center;
   }
