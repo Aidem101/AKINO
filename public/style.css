@@ -252,6 +252,11 @@ button:hover {
   /* Слайдер: высота = 75vw (aspect-ratio 100/75) */
   .film-slider {
     aspect-ratio: 100 / 75;
+    background: url("film-strip.svg") center / cover no-repeat;
+  }
+
+  .film-strip-bg {
+    display: none;
   }
 
   /* Трек: явная высота через vw, чтобы проценты на дочерних работали */
@@ -3271,6 +3276,7 @@ a {
   .film-slider {
     padding: 0 30px;
     box-sizing: border-box;
+    background: url("film-strip.svg") center / cover no-repeat;
   }
 
   .film-slider.is-native-mobile-slider {
