@@ -3274,7 +3274,7 @@ a {
 
 @media (max-width: 700px) {
   .film-slider {
-    padding: 0 30px;
+    padding: 0;
     box-sizing: border-box;
     background: url("film-strip.svg") center / cover no-repeat;
   }
@@ -3292,20 +3292,22 @@ a {
   .film-slider.is-native-mobile-slider .film-track {
     transform: none !important;
     transition: none;
-    gap: 12px;
-    width: calc(100% + 60px);
-    margin-left: -30px;
-    padding: 0 30px;
+    gap: 8px;
+    width: 100%;
+    margin-left: 0;
+    padding: 0 max(24px, calc((100vw - min(78vw, 330px)) / 2));
     box-sizing: border-box;
+    align-items: center;
     overflow-x: auto;
     overflow-y: hidden;
     scroll-snap-type: x mandatory;
+    scroll-padding-inline: max(24px, calc((100vw - min(78vw, 330px)) / 2));
     scrollbar-width: none;
   }
 
   .film-card {
     width: min(78vw, 330px) !important;
-    height: calc(100% - 12px);
+    height: calc(100% - 18px);
     box-sizing: border-box;
     scroll-snap-align: center;
   }
