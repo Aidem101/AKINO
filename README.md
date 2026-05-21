@@ -1,53 +1,53 @@
 # AKINO
 
-Local PHP prototype of an online cinema.
+AKINO - учебный прототип онлайн-кинотеатра. В проекте есть главная страница с подборками фильмов, каталог, карточки фильмов, просмотр, авторизация по номеру телефона, личный кабинет и админ-панель.
 
-## Configuration
+## На чем сделан
 
-Copy `.env.example` to `.env` and set local credentials:
+- PHP
+- MySQL
+- HTML, CSS, JavaScript
+- Vercel для размещения сайта
+- Railway MySQL для удаленной базы данных
 
-```ini
-AKINO_DB_HOST=mysql-8.0
-AKINO_DB_PORT=3306
-AKINO_DB_DATABASE=akino_app
-AKINO_DB_USERNAME=root
-AKINO_DB_PASSWORD=
-AKINO_DB_TIMEOUT=1
-AKINO_DB_FALLBACK_HOSTS=
+## База данных
 
-AKINO_ADMIN_LOGIN=akino_admin
-AKINO_ADMIN_PASSWORD=...
-AKINO_DEMO_AUTH=1
+Структура базы находится в файле:
+
+```text
+database/akino.sql
 ```
 
-`config/database.local.php` and `config/admin.local.php` are also supported and ignored by git.
-For OpenServer, the local MySQL module commonly works through `mysql-8.0` with `root` and an empty password. `AKINO_DB_FALLBACK_HOSTS` is intentionally empty by default so page loads do not wait on unreachable fallback addresses.
+Для локального запуска настройки можно взять из:
 
-## Database Setup
+```text
+.env.example
+```
 
-Run the explicit setup script instead of relying on page loads to mutate the database:
+Основные переменные окружения:
+
+```text
+AKINO_DB_HOST
+AKINO_DB_PORT
+AKINO_DB_DATABASE
+AKINO_DB_USERNAME
+AKINO_DB_PASSWORD
+AKINO_ADMIN_LOGIN
+AKINO_ADMIN_PASSWORD
+AKINO_RUNTIME_BOOTSTRAP
+AKINO_DEMO_AUTH
+```
+
+## Локальный запуск
+
+Проект рассчитан на запуск через OSPanel/OpenServer с PHP и MySQL. Входная папка сайта:
+
+```text
+public
+```
+
+Для первичной настройки базы можно использовать:
 
 ```powershell
 C:\OSPanel\modules\PHP-8.0\php.exe tools\setup_database.php
-```
-
-Useful options:
-
-```powershell
-C:\OSPanel\modules\PHP-8.0\php.exe tools\setup_database.php --skip-schema
-C:\OSPanel\modules\PHP-8.0\php.exe tools\setup_database.php --skip-seed
-```
-
-The schema lives in `database/akino.sql`. Demo movie, season, episode and admin seed data is only loaded when `AKINO_RUNTIME_BOOTSTRAP=1`, which the setup script enables for its own run.
-
-## Tests
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -SkipVisual
-```
-
-For a real database run:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tests\run-tests.ps1 -StrictDb -SkipVisual
 ```
