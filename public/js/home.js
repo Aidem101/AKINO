@@ -382,7 +382,6 @@
 
     phoneForm.addEventListener('submit', async (event) => {
       event.preventDefault();
-      phoneForm.classList.add('is-submitting');
 
       try {
         const payload = await postForm('api/request-code.php', {
@@ -401,8 +400,6 @@
       } catch (error) {
         setFeedback(error.message, 'error', 2800);
         setDemoCode('');
-      } finally {
-        phoneForm.classList.remove('is-submitting');
       }
     });
 
@@ -416,8 +413,6 @@
         return;
       }
 
-      codeForm.classList.add('is-submitting');
-
       try {
         const payload = await postForm('api/verify-code.php', {
           requestId: String(state.requestId),
@@ -428,8 +423,6 @@
         window.location.href = payload.redirect || 'Cabinet.php';
       } catch (error) {
         setFeedback(error.message, 'error', 2800);
-      } finally {
-        codeForm.classList.remove('is-submitting');
       }
     });
 
