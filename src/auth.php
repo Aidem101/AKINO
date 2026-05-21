@@ -201,6 +201,7 @@ function login_user(array $user): void
     }
 
     $_SESSION['user_id'] = (int) $user['id'];
+    akino_set_auth_cookie((int) $user['id']);
 
     $statement = db()->prepare('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = :id');
     $statement->execute(['id' => (int) $user['id']]);
@@ -209,6 +210,7 @@ function login_user(array $user): void
 function logout_user(): void
 {
     $_SESSION = [];
+    akino_clear_auth_cookie();
 
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();

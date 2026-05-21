@@ -128,6 +128,17 @@ function request_origin(): string
     return strtolower($scheme . '://' . $host);
 }
 
+function request_is_secure(): bool
+{
+    $forwardedProto = strtolower(trim(explode(',', (string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? ''))[0] ?? ''));
+
+    if ($forwardedProto !== '') {
+        return $forwardedProto === 'https';
+    }
+
+    return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+}
+
 function origin_from_url(string $url): string
 {
     $parts = parse_url($url);
@@ -264,6 +275,10 @@ function current_user_id(): ?int
     $userId = $_SESSION['user_id'] ?? null;
 
     if (!is_numeric($userId)) {
+        $userId = akino_auth_cookie_user_id();
+    }
+
+    if (!is_numeric($userId)) {
         return null;
     }
 
@@ -276,6 +291,89 @@ function current_user_id(): ?int
     }
 
     return (int) $user['id'];
+}
+
+function akino_auth_cookie_name(): string
+{
+    return 'akino_auth';
+}
+
+function akino_auth_cookie_secret(): string
+{
+    $secret = (string) getenv('AKINO_AUTH_SECRET');
+
+    if ($secret !== '') {
+        return $secret;
+    }
+
+    $dbPassword = (string) getenv('AKINO_DB_PASSWORD');
+
+    return $dbPassword !== '' ? $dbPassword : 'akino-local-auth-secret';
+}
+
+function akino_auth_cookie_signature(int $userId, int $expiresAt): string
+{
+    return hash_hmac('sha256', $userId . '|' . $expiresAt, akino_auth_cookie_secret());
+}
+
+function akino_set_auth_cookie(int $userId): void
+{
+    $expiresAt = time() + 60 * 60 * 24 * 30;
+    $signature = akino_auth_cookie_signature($userId, $expiresAt);
+    $value = $userId . '|' . $expiresAt . '|' . $signature;
+
+    setcookie(akino_auth_cookie_name(), $value, [
+        'expires' => $expiresAt,
+        'path' => '/',
+        'secure' => request_is_secure(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+
+    $_COOKIE[akino_auth_cookie_name()] = $value;
+}
+
+function akino_clear_auth_cookie(): void
+{
+    setcookie(akino_auth_cookie_name(), '', [
+        'expires' => time() - 42000,
+        'path' => '/',
+        'secure' => request_is_secure(),
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+
+    unset($_COOKIE[akino_auth_cookie_name()]);
+}
+
+function akino_auth_cookie_user_id(): ?int
+{
+    $value = (string) ($_COOKIE[akino_auth_cookie_name()] ?? '');
+    $parts = explode('|', $value);
+
+    if (count($parts) !== 3 || !ctype_digit($parts[0]) || !ctype_digit($parts[1])) {
+        return null;
+    }
+
+    $userId = (int) $parts[0];
+    $expiresAt = (int) $parts[1];
+    $signature = (string) $parts[2];
+
+    if ($userId < 1 || $expiresAt < time()) {
+        akino_clear_auth_cookie();
+
+        return null;
+    }
+
+    if (!hash_equals(akino_auth_cookie_signature($userId, $expiresAt), $signature)) {
+        akino_clear_auth_cookie();
+
+        return null;
+    }
+
+    $_SESSION['user_id'] = $userId;
+
+    return $userId;
 }
 
 function user_exists_by_phone(string $phone): bool
