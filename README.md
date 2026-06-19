@@ -10,6 +10,30 @@ AKINO - учебный прототип онлайн-кинотеатра. В п
 - Vercel для размещения сайта
 - Railway MySQL для удаленной базы данных
 
+## Размещение на Railway
+
+В репозитории есть `Dockerfile`, поэтому Railway может развернуть PHP-сайт напрямую из GitHub.
+
+1. В Railway откройте проект с MySQL и нажмите **New** -> **GitHub Repo**.
+2. Выберите репозиторий `Aidem101/AKINO` и ветку `main`.
+3. В переменных нового сервиса укажите:
+
+```text
+AKINO_DB_HOST=${{MySQL.MYSQLHOST}}
+AKINO_DB_PORT=${{MySQL.MYSQLPORT}}
+AKINO_DB_DATABASE=${{MySQL.MYSQLDATABASE}}
+AKINO_DB_USERNAME=${{MySQL.MYSQLUSER}}
+AKINO_DB_PASSWORD=${{MySQL.MYSQLPASSWORD}}
+AKINO_APP_ENV=production
+AKINO_TRUST_PROXY=1
+AKINO_RUNTIME_BOOTSTRAP=1
+AKINO_DEMO_AUTH=0
+AKINO_APP_ORIGIN=https://ваш-домен.up.railway.app
+```
+
+Задайте также собственные значения `AKINO_AUTH_SECRET` и `AKINO_ADMIN_PASSWORD`.
+После первого запуска в разделе **Settings** -> **Networking** создайте публичный домен и подставьте его в `AKINO_APP_ORIGIN`.
+
 ## База данных
 
 Структура базы находится в файле:
