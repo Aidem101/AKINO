@@ -16,8 +16,8 @@ if [ "${AKINO_RUNTIME_BOOTSTRAP:-0}" = "1" ]; then
 
     until php /var/www/html/tools/setup_database.php --skip-seed; do
         if [ "$attempt" -ge 10 ]; then
-            echo "Database schema setup failed after ${attempt} attempts." >&2
-            exit 1
+            echo "Database schema setup failed after ${attempt} attempts; starting the web server in fallback mode." >&2
+            break
         fi
 
         attempt=$((attempt + 1))

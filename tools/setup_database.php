@@ -100,6 +100,12 @@ function setup_column_exists(PDO $pdo, string $database, string $table, string $
 try {
     $config = setup_config();
 
+    foreach (['host', 'database', 'username'] as $requiredKey) {
+        if (trim((string) ($config[$requiredKey] ?? '')) === '') {
+            throw new RuntimeException('Database setting is empty: ' . $requiredKey);
+        }
+    }
+
     if (!$skipSchema) {
         if (!is_file($schemaPath)) {
             throw new RuntimeException('Schema file not found: ' . $schemaPath);
