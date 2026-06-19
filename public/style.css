@@ -2358,6 +2358,11 @@ h2{
   border-color: #E6C591;
   color: #E6C591;
 }
+
+.login-btn:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
 .polz-sogl {
   font-size: 16px;
   font-weight: 400;

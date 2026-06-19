@@ -478,6 +478,19 @@
       return;
     }
 
+    let phoneRequestPending = false;
+    let codeVerificationPending = false;
+
+    function setFormPending(form, isPending) {
+      const submitButton = form.querySelector('.login-btn');
+
+      if (submitButton) {
+        submitButton.disabled = isPending;
+      }
+
+      form.classList.toggle('is-pending', isPending);
+    }
+
     closeButton.addEventListener('click', closeModal);
 
     modal.addEventListener('click', (event) => {
@@ -488,6 +501,13 @@
 
     phoneForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+
+      if (phoneRequestPending) {
+        return;
+      }
+
+      phoneRequestPending = true;
+      setFormPending(phoneForm, true);
 
       try {
         const payload = await postForm('api/request-code.php', {
@@ -506,11 +526,18 @@
       } catch (error) {
         setFeedback(error.message, 'error', 2800);
         setDemoCode('');
+      } finally {
+        phoneRequestPending = false;
+        setFormPending(phoneForm, false);
       }
     });
 
     codeForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+
+      if (codeVerificationPending) {
+        return;
+      }
 
       const code = digitInputs.map((input) => input.value).join('');
 
@@ -518,6 +545,9 @@
         setFeedback('Введите все 4 цифры кода.', 'error', 2800);
         return;
       }
+
+      codeVerificationPending = true;
+      setFormPending(codeForm, true);
 
       try {
         const payload = await postForm('api/verify-code.php', {
@@ -529,6 +559,9 @@
         window.location.href = payload.redirect || 'Cabinet.php';
       } catch (error) {
         setFeedback(error.message, 'error', 2800);
+      } finally {
+        codeVerificationPending = false;
+        setFormPending(codeForm, false);
       }
     });
 
