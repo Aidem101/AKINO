@@ -57,7 +57,7 @@ function akino_trust_proxy_headers(): bool
 
 function akino_demo_auth_enabled(): bool
 {
-    return !akino_is_production() && akino_env_flag('AKINO_DEMO_AUTH');
+    return akino_env_flag('AKINO_DEMO_AUTH');
 }
 
 function akino_runtime_bootstrap_enabled(): bool
