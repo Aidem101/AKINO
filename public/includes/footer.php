@@ -5,7 +5,7 @@
         <h2>Информация</h2>
         <a href="Info.php?page=privacy">Политика приватности</a>
         <a href="Info.php?page=agreement">Пользовательское соглашение</a>
-        <a href="Info.php?page=privacy">Политика конфиденциальности</a>
+        <a href="Info.php?page=confidentiality">Политика конфиденциальности</a>
         <a href="Info.php?page=cookies">Политика обработки файлов и cookie</a>
       </div>
     </div>
@@ -49,6 +49,6 @@
         </a>
       </div>
     </div>
-    <p>© 2025 ООО “AKINO” 18+</p>
+    <p>© 2026 AKINO · 18+</p>
   </div>
 </footer>

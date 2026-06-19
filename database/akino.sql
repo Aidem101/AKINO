@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS `auth_codes` (
   `code_hash` VARCHAR(255) NOT NULL,
   `intent` ENUM('login', 'subscribe') NOT NULL DEFAULT 'login',
   `expires_at` DATETIME NOT NULL,
+  `attempt_count` SMALLINT UNSIGNED NOT NULL DEFAULT 0,
   `used_at` DATETIME DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
@@ -196,6 +197,7 @@ CREATE TABLE IF NOT EXISTS `admin_accounts` (
   `password_hash` VARCHAR(255) NOT NULL,
   `display_name` VARCHAR(120) NOT NULL,
   `avatar_path` VARCHAR(255) NOT NULL DEFAULT 'img/people/image_2025-11-10_00-02-43.png',
+  `role` VARCHAR(24) NOT NULL DEFAULT 'owner',
   `last_login_at` DATETIME DEFAULT NULL,
   `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -218,6 +220,65 @@ CREATE TABLE IF NOT EXISTS `admin_user_action_logs` (
     FOREIGN KEY (`admin_account_id`) REFERENCES `admin_accounts` (`id`) ON DELETE SET NULL,
   CONSTRAINT `admin_user_action_logs_user_id_foreign`
     FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `security_rate_limits` (
+  `bucket` VARCHAR(80) NOT NULL,
+  `identity_hash` CHAR(64) NOT NULL,
+  `attempts` INT UNSIGNED NOT NULL DEFAULT 0,
+  `window_started_at` DATETIME NOT NULL,
+  `blocked_until` DATETIME DEFAULT NULL,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`bucket`, `identity_hash`),
+  KEY `security_rate_limits_updated_index` (`updated_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `security_events` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `event_type` VARCHAR(80) NOT NULL,
+  `severity` VARCHAR(16) NOT NULL DEFAULT 'info',
+  `actor_type` VARCHAR(24) NOT NULL DEFAULT 'system',
+  `actor_id` BIGINT UNSIGNED DEFAULT NULL,
+  `actor_label` VARCHAR(120) DEFAULT NULL,
+  `ip_hash` CHAR(64) NOT NULL,
+  `ip_masked` VARCHAR(64) NOT NULL,
+  `request_path` VARCHAR(190) DEFAULT NULL,
+  `details_json` TEXT DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `security_events_type_created_index` (`event_type`, `created_at`),
+  KEY `security_events_severity_created_index` (`severity`, `created_at`),
+  KEY `security_events_ip_created_index` (`ip_hash`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `security_backups` (
+  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `filename` VARCHAR(190) NOT NULL,
+  `checksum` CHAR(64) NOT NULL,
+  `size_bytes` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'created',
+  `created_by` BIGINT UNSIGNED DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `verified_at` DATETIME DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `security_backups_filename_unique` (`filename`),
+  KEY `security_backups_created_index` (`created_at`),
+  CONSTRAINT `security_backups_created_by_foreign`
+    FOREIGN KEY (`created_by`) REFERENCES `admin_accounts` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `security_file_integrity` (
+  `path` VARCHAR(255) NOT NULL,
+  `checksum` CHAR(64) NOT NULL,
+  `size_bytes` BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'clean',
+  `recorded_by` BIGINT UNSIGNED DEFAULT NULL,
+  `recorded_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `checked_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`path`),
+  KEY `security_file_integrity_status_index` (`status`),
+  CONSTRAINT `security_file_integrity_recorded_by_foreign`
+    FOREIGN KEY (`recorded_by`) REFERENCES `admin_accounts` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO `subscription_plans` (`code`, `name`, `description`, `price`, `duration_days`)

@@ -12,6 +12,7 @@ $tabs = [
     'users' => 'Пользователи',
     'admins' => 'Администраторы',
     'subscriptions' => 'Подписки и платежи',
+    'security' => 'Безопасность',
     'settings' => 'Настройки',
 ];
 
@@ -75,7 +76,26 @@ try {
     $adminError = $exception->getMessage();
 }
 
+$accessWarning = null;
+
+if ($adminUser !== null) {
+    foreach (array_keys($tabs) as $tabKey) {
+        if (!admin_can($adminUser, admin_tab_permission($tabKey))) {
+            unset($tabs[$tabKey]);
+        }
+    }
+
+    if (!isset($tabs[$activeTab])) {
+        $accessWarning = 'Для запрошенного раздела недостаточно прав.';
+        $activeTab = admin_first_allowed_tab($adminUser);
+    }
+}
+
 $flash = $adminError === null ? admin_pull_flash() : null;
+
+if ($flash === null && $accessWarning !== null) {
+    $flash = ['type' => 'warning', 'message' => $accessWarning];
+}
 $stats = [
     'contentCount' => 0,
     'movieCount' => 0,
@@ -114,10 +134,24 @@ $editingEpisode = null;
 $episodeForm = admin_episode_form_defaults();
 $newAdminErrors = [];
 $passwordErrors = [];
+$roleErrors = [];
+$roleDefinitions = admin_role_definitions();
+$securityDashboard = [
+    'events24h' => 0,
+    'warnings7d' => 0,
+    'blockedNow' => 0,
+    'changedFiles' => 0,
+    'trend' => [],
+    'topSources' => [],
+    'events' => [],
+];
+$securityBackups = [];
+$integrityFiles = [];
 $newAdminForm = [
     'login' => '',
     'display_name' => '',
     'avatar_path' => '',
+    'role' => 'auditor',
 ];
 
 if ($adminError === null) {
@@ -130,8 +164,31 @@ if ($adminError === null) {
         $csrfToken = $_POST['csrf_token'] ?? null;
 
         if (!admin_verify_csrf_token(is_string($csrfToken) ? $csrfToken : null)) {
+            security_event_log(
+                'csrf_rejected',
+                'warning',
+                'admin',
+                (int) ($adminUser['id'] ?? 0),
+                (string) ($adminUser['login'] ?? '')
+            );
             admin_flash('error', 'Сессия администратора устарела. Обновите страницу и повторите попытку.');
             header('Location: ' . $buildTabUrl($activeTab));
+            exit;
+        }
+
+        $requiredPermission = admin_action_permission($action);
+
+        if (!admin_can($adminUser, $requiredPermission)) {
+            security_event_log(
+                'permission_denied',
+                'warning',
+                'admin',
+                (int) ($adminUser['id'] ?? 0),
+                (string) ($adminUser['login'] ?? ''),
+                ['action' => $action, 'required_permission' => $requiredPermission]
+            );
+            admin_flash('error', 'Недостаточно прав для выполнения этого действия.');
+            header('Location: ' . $buildTabUrl(admin_first_allowed_tab($adminUser)));
             exit;
         }
 
@@ -143,6 +200,10 @@ if ($adminError === null) {
             $activeTab = 'users';
         } elseif ($action === 'create_admin' || $action === 'change_password') {
             $activeTab = 'admins';
+        } elseif ($action === 'change_admin_role') {
+            $activeTab = 'admins';
+        } elseif (in_array($action, ['create_backup', 'verify_backup', 'record_integrity_baseline', 'scan_integrity'], true)) {
+            $activeTab = 'security';
         }
 
         if ($action === 'save_user_profile') {
@@ -211,56 +272,122 @@ if ($adminError === null) {
             exit;
         } elseif ($action === 'delete_movie') {
             $movieId = max(0, (int) ($_POST['movie_id'] ?? 0));
+            $deletedMovie = $movieId > 0 ? fetch_admin_movie_by_id($movieId) : null;
 
-            if ($movieId <= 0 || fetch_admin_movie_by_id($movieId) === null) {
+            if ($movieId <= 0 || $deletedMovie === null) {
                 $formErrors[] = 'Карточка для удаления не найдена.';
             } else {
-                delete_admin_movie($movieId);
+                try {
+                    $deleted = delete_admin_movie($movieId);
+                } catch (Throwable) {
+                    $deleted = false;
+                }
+
+                if (!$deleted) {
+                    admin_flash('error', 'Карточку не удалось удалить. Обновите страницу и попробуйте ещё раз.');
+                    header('Location: ' . $buildTabUrl('content'));
+                    exit;
+                }
+
                 admin_flash('success', 'Контент удалён из каталога.');
+                security_event_log(
+                    'content_deleted',
+                    'warning',
+                    'admin',
+                    (int) ($adminUser['id'] ?? 0),
+                    (string) ($adminUser['login'] ?? ''),
+                    ['movie_id' => $movieId, 'title' => (string) ($deletedMovie['title'] ?? '')]
+                );
                 header('Location: ' . $buildTabUrl('content'));
                 exit;
             }
         } elseif ($action === 'save_movie') {
             $form = admin_movie_form_from_input($_POST);
             $movieId = $form['id'] > 0 ? (int) $form['id'] : null;
+            $editingMovie = $movieId ? fetch_admin_movie_by_id($movieId) : null;
             $formErrors = admin_validate_movie_form($form, $genreOptions);
 
             if (!$formErrors) {
-                $savedMovie = save_admin_movie($form, $movieId);
-                admin_flash(
-                    'success',
-                    $movieId ? 'Контент обновлён.' : 'Новый контент добавлен в каталог.'
-                );
-                header('Location: ' . $buildTabUrl('content', ['edit' => (int) ($savedMovie['id'] ?? 0)]) . '#adminContentForm');
-                exit;
+                try {
+                    $savedMovie = save_admin_movie($form, $movieId);
+                    admin_flash(
+                        'success',
+                        $movieId ? 'Контент обновлён.' : 'Новый контент добавлен в каталог.'
+                    );
+                    security_event_log(
+                        $movieId ? 'content_updated' : 'content_created',
+                        'info',
+                        'admin',
+                        (int) ($adminUser['id'] ?? 0),
+                        (string) ($adminUser['login'] ?? ''),
+                        [
+                            'movie_id' => (int) ($savedMovie['id'] ?? 0),
+                            'title' => (string) ($savedMovie['title'] ?? ''),
+                        ]
+                    );
+                    header('Location: ' . $buildTabUrl('content', ['edit' => (int) ($savedMovie['id'] ?? 0)]) . '#adminContentForm');
+                    exit;
+                } catch (Throwable $exception) {
+                    akino_log_exception($exception);
+                    $formErrors[] = 'Не удалось сохранить карточку. Обновите страницу и повторите попытку.';
+                }
             }
         } elseif ($action === 'delete_episode') {
             $episodeId = max(0, (int) ($_POST['episode_id'] ?? 0));
+            $deletedEpisode = $episodeId > 0 ? admin_fetch_episode_by_id($episodeId) : null;
 
-            if ($episodeId <= 0 || admin_fetch_episode_by_id($episodeId) === null) {
-                $episodeErrors[] = 'Episode was not found.';
+            if ($episodeId <= 0 || $deletedEpisode === null) {
+                $episodeErrors[] = 'Серия для удаления не найдена.';
             } else {
                 admin_delete_episode($episodeId);
-                admin_flash('success', 'Episode deleted.');
+                admin_flash('success', 'Серия удалена.');
+                security_event_log(
+                    'episode_deleted',
+                    'warning',
+                    'admin',
+                    (int) ($adminUser['id'] ?? 0),
+                    (string) ($adminUser['login'] ?? ''),
+                    ['episode_id' => $episodeId, 'title' => (string) ($deletedEpisode['title'] ?? '')]
+                );
                 header('Location: ' . $buildTabUrl('episodes'));
                 exit;
             }
         } elseif ($action === 'save_episode') {
             $episodeForm = admin_episode_form_from_input($_POST);
             $episodeId = $episodeForm['id'] > 0 ? (int) $episodeForm['id'] : null;
+            $editingEpisode = $episodeId ? admin_fetch_episode_by_id($episodeId) : null;
             $episodeErrors = admin_validate_episode_form($episodeForm);
 
             if (!$episodeErrors) {
-                $savedEpisode = admin_save_episode($episodeForm, $episodeId);
-                admin_flash('success', $episodeId ? 'Episode updated.' : 'Episode added.');
-                header('Location: ' . $buildTabUrl('episodes', ['edit_episode' => (int) ($savedEpisode['id'] ?? 0)]) . '#adminEpisodeForm');
-                exit;
+                try {
+                    $savedEpisode = admin_save_episode($episodeForm, $episodeId);
+                    admin_flash('success', $episodeId ? 'Серия обновлена.' : 'Серия добавлена.');
+                    security_event_log(
+                        $episodeId ? 'episode_updated' : 'episode_created',
+                        'info',
+                        'admin',
+                        (int) ($adminUser['id'] ?? 0),
+                        (string) ($adminUser['login'] ?? ''),
+                        [
+                            'episode_id' => (int) ($savedEpisode['id'] ?? 0),
+                            'title' => (string) ($savedEpisode['title'] ?? ''),
+                        ]
+                    );
+                    header('Location: ' . $buildTabUrl('episodes', ['edit_episode' => (int) ($savedEpisode['id'] ?? 0)]) . '#adminEpisodeForm');
+                    exit;
+                } catch (Throwable $exception) {
+                    akino_log_exception($exception);
+                    $episodeErrors[] = $exception instanceof RuntimeException
+                        ? $exception->getMessage()
+                        : 'Не удалось сохранить серию. Обновите страницу и повторите попытку.';
+                }
             }
         } elseif ($action === 'create_admin') {
             $newAdminForm = [
                 'login' => trim((string) ($_POST['login'] ?? '')),
                 'display_name' => trim((string) ($_POST['display_name'] ?? '')),
                 'avatar_path' => trim((string) ($_POST['avatar_path'] ?? '')),
+                'role' => admin_normalize_role((string) ($_POST['role'] ?? 'auditor')),
             ];
             $newAdminErrors = admin_validate_new_account($_POST);
 
@@ -283,6 +410,78 @@ if ($adminError === null) {
                 header('Location: ' . $buildTabUrl('admins') . '#adminPasswordForm');
                 exit;
             }
+        } elseif ($action === 'change_admin_role') {
+            $roleErrors = admin_change_account_role(
+                max(0, (int) ($_POST['account_id'] ?? 0)),
+                (string) ($_POST['role'] ?? ''),
+                (int) ($adminUser['id'] ?? 0)
+            );
+
+            if ($roleErrors) {
+                admin_flash('error', implode(' ', $roleErrors));
+            } else {
+                admin_flash('success', 'Роль администратора обновлена.');
+            }
+
+            header('Location: ' . $buildTabUrl('admins'));
+            exit;
+        } elseif ($action === 'create_backup') {
+            try {
+                create_encrypted_database_backup((int) ($adminUser['id'] ?? 0));
+                admin_flash('success', 'Зашифрованная резервная копия создана.');
+            } catch (Throwable $exception) {
+                akino_log_exception($exception);
+                admin_flash('error', $exception->getMessage());
+            }
+
+            header('Location: ' . $buildTabUrl('security') . '#securityBackups');
+            exit;
+        } elseif ($action === 'verify_backup') {
+            $backupId = max(0, (int) ($_POST['backup_id'] ?? 0));
+
+            try {
+                $verified = verify_encrypted_database_backup($backupId, (int) ($adminUser['id'] ?? 0));
+                admin_flash(
+                    $verified ? 'success' : 'error',
+                    $verified
+                        ? 'Контрольная сумма и расшифровка резервной копии проверены.'
+                        : 'Резервная копия повреждена или не может быть расшифрована.'
+                );
+            } catch (Throwable $exception) {
+                akino_log_exception($exception);
+                admin_flash('error', $exception->getMessage());
+            }
+
+            header('Location: ' . $buildTabUrl('security') . '#securityBackups');
+            exit;
+        } elseif ($action === 'record_integrity_baseline') {
+            try {
+                $integrityResult = record_file_integrity_baseline((int) ($adminUser['id'] ?? 0));
+                admin_flash('success', 'Эталон сохранён: ' . (int) $integrityResult['total'] . ' файлов.');
+            } catch (Throwable $exception) {
+                akino_log_exception($exception);
+                admin_flash('error', $exception->getMessage());
+            }
+
+            header('Location: ' . $buildTabUrl('security') . '#fileIntegrity');
+            exit;
+        } elseif ($action === 'scan_integrity') {
+            try {
+                $integrityResult = scan_file_integrity((int) ($adminUser['id'] ?? 0));
+                $changedCount = (int) $integrityResult['changed'] + (int) $integrityResult['missing'];
+                admin_flash(
+                    $changedCount === 0 ? 'success' : 'error',
+                    $changedCount === 0
+                        ? 'Все контролируемые файлы соответствуют эталону.'
+                        : 'Обнаружено изменённых или отсутствующих файлов: ' . $changedCount . '.'
+                );
+            } catch (Throwable $exception) {
+                akino_log_exception($exception);
+                admin_flash('error', $exception->getMessage());
+            }
+
+            header('Location: ' . $buildTabUrl('security') . '#fileIntegrity');
+            exit;
         }
     }
 
@@ -314,17 +513,28 @@ if ($adminError === null) {
             } else {
                 $flash = [
                     'type' => 'warning',
-                    'message' => 'Episode was not found. New episode form is opened.',
+                    'message' => 'Серия для редактирования не найдена. Открыта форма создания новой серии.',
                 ];
             }
         }
     }
 
-    $contentList = fetch_admin_content_list(24);
-    $seriesOptions = fetch_admin_series_options();
-    $episodeList = fetch_admin_episode_list(60);
-    $recentSubscriptions = fetch_admin_recent_subscriptions(10);
-    $adminAccounts = fetch_admin_accounts(20);
+    if (admin_can($adminUser, 'content.manage')) {
+        $contentList = fetch_admin_content_list(24);
+    }
+
+    if (admin_can($adminUser, 'episodes.manage')) {
+        $seriesOptions = fetch_admin_series_options();
+        $episodeList = fetch_admin_episode_list(60);
+    }
+
+    if (admin_can($adminUser, 'subscriptions.view')) {
+        $recentSubscriptions = fetch_admin_recent_subscriptions(10);
+    }
+
+    if (admin_can($adminUser, 'admins.manage')) {
+        $adminAccounts = fetch_admin_accounts(20);
+    }
 
     if ($activeTab === 'users') {
         $userOverview = fetch_admin_user_overview();
@@ -343,10 +553,16 @@ if ($adminError === null) {
             }
         }
     }
+
+    if ($activeTab === 'security') {
+        $securityDashboard = fetch_security_dashboard();
+        $securityBackups = fetch_security_backups(20);
+        $integrityFiles = fetch_file_integrity_status(60);
+    }
 }
 
 $pageTitle = 'Панель администратора AKINO';
-$assetVersion = '20260413-1';
+$assetVersion = '20260614-2';
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -365,12 +581,12 @@ $assetVersion = '20260413-1';
 
       <div class="admin-user-card">
         <img
-          src="<?= $escape((string) ($sidebarAdmin['avatar_path'] ?? 'img/people/image_2025-11-10_00-02-43.png')) ?>"
+          src="<?= $escape(akino_avatar_display_path($sidebarAdmin['avatar_path'] ?? null)) ?>"
           alt="<?= $escape((string) ($sidebarAdmin['display_name'] ?? 'Администратор')) ?>"
           class="admin-user-avatar"
         >
         <div>
-          <span class="admin-user-role">Админ-аккаунт</span>
+          <span class="admin-user-role"><?= $escape($sidebarAdmin ? admin_role_label((string) ($sidebarAdmin['role'] ?? 'auditor')) : 'Админ-аккаунт') ?></span>
           <strong><?= $escape((string) ($sidebarAdmin['display_name'] ?? 'Вход требуется')) ?></strong>
           <small><?= $sidebarAdmin ? '@' . $escape((string) ($sidebarAdmin['login'] ?? 'admin')) : 'Защищённый вход' ?></small>
         </div>
@@ -387,7 +603,7 @@ $assetVersion = '20260413-1';
       <div class="admin-sidebar-footer">
         <a href="Home.php">Открыть витрину</a>
         <a href="Admin_Login.php">Страница входа</a>
-        <a href="admin_logout.php">Выйти</a>
+        <a href="admin_logout.php?csrf=<?= $escape(admin_csrf_token()) ?>">Выйти</a>
       </div>
     </aside>
 
@@ -658,7 +874,7 @@ $assetVersion = '20260413-1';
                         <small>Обновлено <?= $escape(admin_format_datetime($item['updated_at'] ?? null)) ?></small>
                         <div class="admin-content-actions">
                           <a href="<?= $escape($buildTabUrl('content', ['edit' => (int) $item['id']])) ?>#adminContentForm" class="admin-btn admin-btn-secondary">Редактировать</a>
-                          <form method="post" onsubmit="return confirm('Удалить эту карточку из каталога AKINO?');">
+                          <form method="post" action="<?= $escape($buildTabUrl('content')) ?>" data-confirm="Удалить эту карточку из каталога AKINO?">
                             <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
                             <input type="hidden" name="admin_action" value="delete_movie">
                             <input type="hidden" name="movie_id" value="<?= (int) $item['id'] ?>">
@@ -673,21 +889,34 @@ $assetVersion = '20260413-1';
             <?php endif; ?>
           </section>
         <?php elseif ($activeTab === 'episodes'): ?>
+          <?php
+            $invalidEpisodeCount = count(array_filter(
+                $episodeList,
+                static fn (array $episode): bool => ($episode['series_content_type'] ?? '') !== 'series'
+            ));
+          ?>
           <section class="admin-section">
             <div class="admin-section-head">
               <div>
-                <h2>Episodes</h2>
-                <p>Manage seasons and episodes separately from the main series card. Existing changes are stored in the database, not in runtime seed data.</p>
+                <h2>Серии</h2>
+                <p>Управляйте сезонами и сериями отдельно от основной карточки сериала. Все изменения сохраняются в базе данных.</p>
               </div>
 
               <?php if ($editingEpisode !== null): ?>
-                <a href="<?= $escape($buildTabUrl('episodes')) ?>#adminEpisodeForm" class="admin-btn admin-btn-secondary">Create episode</a>
+                <a href="<?= $escape($buildTabUrl('episodes')) ?>#adminEpisodeForm" class="admin-btn admin-btn-secondary">Создать серию</a>
               <?php endif; ?>
             </div>
 
+            <?php if ($invalidEpisodeCount > 0): ?>
+              <div class="admin-alert admin-alert-warning">
+                В базе найдено серий, привязанных к карточкам типа «Фильм»: <?= $invalidEpisodeCount ?>.
+                Такие записи отмечены ниже и не показываются зрителям как сериал.
+              </div>
+            <?php endif; ?>
+
             <?php if ($episodeErrors): ?>
               <div class="admin-alert admin-alert-error">
-                <strong>Episode form has errors.</strong>
+                <strong>Проверьте форму серии.</strong>
                 <ul class="admin-error-list">
                   <?php foreach ($episodeErrors as $error): ?>
                     <li><?= $escape($error) ?></li>
@@ -699,14 +928,14 @@ $assetVersion = '20260413-1';
             <section class="admin-form-card" id="adminEpisodeForm">
               <div class="admin-form-head">
                 <div>
-                  <h3><?= $editingEpisode !== null ? 'Edit episode' : 'New episode' ?></h3>
-                  <p>Pick a series, season number and episode media URL. The season is created automatically when it does not exist.</p>
+                  <h3><?= $editingEpisode !== null ? 'Редактирование серии' : 'Новая серия' ?></h3>
+                  <p>Выберите сериал, укажите сезон, номер серии и ссылку на видео. Новый сезон будет создан автоматически.</p>
                 </div>
-                <span class="admin-form-kicker"><?= $editingEpisode !== null ? 'Editing' : 'Episode CMS' ?></span>
+                <span class="admin-form-kicker"><?= $editingEpisode !== null ? 'Редактирование' : 'Библиотека серий' ?></span>
               </div>
 
               <?php if (!$seriesOptions): ?>
-                <div class="admin-empty-card">Create at least one series card before adding episodes.</div>
+                <div class="admin-empty-card">Сначала создайте хотя бы одну карточку с типом «Сериал».</div>
               <?php else: ?>
                 <form method="post" class="admin-content-form">
                   <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
@@ -715,9 +944,9 @@ $assetVersion = '20260413-1';
 
                   <div class="admin-form-grid">
                     <label class="admin-field admin-field-wide">
-                      <span>Series*</span>
+                      <span>Сериал*</span>
                       <select name="series_id" required>
-                        <option value="">Select series</option>
+                        <option value="">Выберите сериал</option>
                         <?php foreach ($seriesOptions as $seriesOption): ?>
                           <option value="<?= (int) $seriesOption['id'] ?>"<?= (int) $episodeForm['seriesId'] === (int) $seriesOption['id'] ? ' selected' : '' ?>>
                             <?= $escape((string) $seriesOption['title']) ?>
@@ -727,62 +956,62 @@ $assetVersion = '20260413-1';
                     </label>
 
                     <label class="admin-field admin-field-small">
-                      <span>Season #*</span>
+                      <span>Номер сезона*</span>
                       <input type="number" name="season_number" min="1" value="<?= (int) $episodeForm['seasonNumber'] ?>" required>
                     </label>
 
                     <label class="admin-field admin-field-wide">
-                      <span>Season title*</span>
+                      <span>Название сезона*</span>
                       <input type="text" name="season_title" value="<?= $escape((string) $episodeForm['seasonTitle']) ?>" maxlength="160" required>
                     </label>
 
                     <label class="admin-field admin-field-full">
-                      <span>Season description</span>
+                      <span>Описание сезона</span>
                       <textarea name="season_description" rows="3"><?= $escape((string) $episodeForm['seasonDescription']) ?></textarea>
                     </label>
 
                     <label class="admin-field admin-field-small">
-                      <span>Episode #*</span>
+                      <span>Номер серии*</span>
                       <input type="number" name="episode_number" min="1" value="<?= (int) $episodeForm['episodeNumber'] ?>" required>
                     </label>
 
                     <label class="admin-field admin-field-wide">
-                      <span>Episode title*</span>
+                      <span>Название серии*</span>
                       <input type="text" name="episode_title" value="<?= $escape((string) $episodeForm['title']) ?>" maxlength="160" required>
                     </label>
 
                     <label class="admin-field admin-field-small">
-                      <span>Duration, min</span>
+                      <span>Длительность, мин</span>
                       <input type="number" name="duration_minutes" min="0" step="1" value="<?= $escape((string) $episodeForm['durationMinutes']) ?>">
                     </label>
 
                     <label class="admin-field admin-field-wide">
-                      <span>Video URL*</span>
+                      <span>URL видео*</span>
                       <input type="text" name="video_path" value="<?= $escape((string) $episodeForm['videoPath']) ?>" placeholder="https://example.com/episode.mp4 or .m3u8" required>
                     </label>
 
                     <label class="admin-field admin-field-wide">
-                      <span>Preview image</span>
+                      <span>Изображение-превью</span>
                       <input type="text" name="preview_path" value="<?= $escape((string) $episodeForm['previewPath']) ?>" placeholder="img/prew/example.webp">
                     </label>
 
                     <label class="admin-field admin-field-small">
-                      <span>Sort order</span>
+                      <span>Порядок сортировки</span>
                       <input type="number" name="sort_order" min="0" step="1" value="<?= $escape((string) $episodeForm['sortOrder']) ?>">
                     </label>
 
                     <label class="admin-field admin-field-full">
-                      <span>Episode description</span>
+                      <span>Описание серии</span>
                       <textarea name="episode_description" rows="5"><?= $escape((string) $episodeForm['description']) ?></textarea>
                     </label>
                   </div>
 
                   <div class="admin-form-actions">
                     <button type="submit" class="admin-btn admin-btn-primary">
-                      <?= $editingEpisode !== null ? 'Save episode' : 'Add episode' ?>
+                      <?= $editingEpisode !== null ? 'Сохранить серию' : 'Добавить серию' ?>
                     </button>
                     <?php if ($editingEpisode !== null): ?>
-                      <a href="<?= $escape($buildTabUrl('episodes')) ?>#adminEpisodeForm" class="admin-btn admin-btn-secondary">Reset form</a>
+                      <a href="<?= $escape($buildTabUrl('episodes')) ?>#adminEpisodeForm" class="admin-btn admin-btn-secondary">Сбросить форму</a>
                     <?php endif; ?>
                   </div>
                 </form>
@@ -793,16 +1022,17 @@ $assetVersion = '20260413-1';
           <section class="admin-section">
             <div class="admin-section-head">
               <div>
-                <h2>Episode library</h2>
-                <p>Latest editable episode rows grouped by their parent series and season.</p>
+                <h2>Библиотека серий</h2>
+                <p>Серии сгруппированы по сериалам и сезонам и доступны для редактирования.</p>
               </div>
             </div>
 
             <?php if (!$episodeList): ?>
-              <div class="admin-empty-card">No episodes have been added yet.</div>
+              <div class="admin-empty-card">Серии ещё не добавлены.</div>
             <?php else: ?>
               <div class="admin-content-grid">
                 <?php foreach ($episodeList as $episodeItem): ?>
+                  <?php $hasInvalidParent = ($episodeItem['series_content_type'] ?? '') !== 'series'; ?>
                   <article class="admin-content-card">
                     <img
                       src="<?= $escape((string) ($episodeItem['preview_path'] ?: $episodeItem['series_card_path'])) ?>"
@@ -812,7 +1042,9 @@ $assetVersion = '20260413-1';
 
                     <div class="admin-content-body">
                       <div class="admin-content-topline">
-                        <span class="admin-type-pill">S<?= (int) $episodeItem['season_number'] ?> E<?= (int) $episodeItem['episode_number'] ?></span>
+                        <span class="admin-type-pill<?= $hasInvalidParent ? ' is-danger' : '' ?>">
+                          <?= $hasInvalidParent ? 'Ошибка типа' : 'Сезон ' . (int) $episodeItem['season_number'] . ' · Серия ' . (int) $episodeItem['episode_number'] ?>
+                        </span>
                         <span class="admin-rating-pill"><?= $escape(playback_format_duration((int) ($episodeItem['duration_seconds'] ?? 0))) ?></span>
                       </div>
 
@@ -821,16 +1053,19 @@ $assetVersion = '20260413-1';
                         <?= $escape((string) $episodeItem['series_title']) ?> · <?= $escape((string) $episodeItem['season_title']) ?>
                       </p>
                       <p class="admin-content-description"><?= $escape((string) ($episodeItem['description'] ?? '')) ?></p>
+                      <?php if ($hasInvalidParent): ?>
+                        <p class="admin-content-warning">Родительская карточка имеет тип «Фильм». Перенесите серию в настоящий сериал или удалите запись.</p>
+                      <?php endif; ?>
 
                       <div class="admin-content-footer">
-                        <small>Updated <?= $escape(admin_format_datetime($episodeItem['updated_at'] ?? null)) ?></small>
+                        <small>Обновлено <?= $escape(admin_format_datetime($episodeItem['updated_at'] ?? null)) ?></small>
                         <div class="admin-content-actions">
-                          <a href="<?= $escape($buildTabUrl('episodes', ['edit_episode' => (int) $episodeItem['id']])) ?>#adminEpisodeForm" class="admin-btn admin-btn-secondary">Edit</a>
-                          <form method="post" onsubmit="return confirm('Delete this episode?');">
+                          <a href="<?= $escape($buildTabUrl('episodes', ['edit_episode' => (int) $episodeItem['id']])) ?>#adminEpisodeForm" class="admin-btn admin-btn-secondary">Редактировать</a>
+                          <form method="post" data-confirm="Удалить эту серию?">
                             <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
                             <input type="hidden" name="admin_action" value="delete_episode">
                             <input type="hidden" name="episode_id" value="<?= (int) $episodeItem['id'] ?>">
-                            <button type="submit" class="admin-btn admin-btn-danger">Delete</button>
+                            <button type="submit" class="admin-btn admin-btn-danger">Удалить</button>
                           </form>
                         </div>
                       </div>
@@ -1007,7 +1242,7 @@ $assetVersion = '20260413-1';
                       <form
                         method="post"
                         action="<?= $escape($buildUserTabUrl(['user' => (int) $userRow['id']])) ?>"
-                        onsubmit="return confirm('<?= $escape($isBlocked ? 'Разблокировать пользователя?' : 'Заблокировать пользователя?') ?>');"
+                        data-confirm="<?= $escape($isBlocked ? 'Разблокировать пользователя?' : 'Заблокировать пользователя?') ?>"
                       >
                         <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
                         <input type="hidden" name="admin_action" value="toggle_user_block">
@@ -1040,7 +1275,7 @@ $assetVersion = '20260413-1';
                   <div class="admin-user-detail-hero">
                     <div class="admin-user-detail-profile">
                       <img
-                        src="<?= $escape((string) ($selectedUser['avatar_display'] ?? 'img/people/image_2025-11-10_00-02-43.png')) ?>"
+                        src="<?= $escape(akino_avatar_display_path($selectedUser['avatar_display'] ?? null)) ?>"
                         alt="<?= $escape((string) ($selectedUser['name_display'] ?? 'Пользователь AKINO')) ?>"
                         class="admin-user-detail-avatar"
                       >
@@ -1072,7 +1307,7 @@ $assetVersion = '20260413-1';
                       <form
                         method="post"
                         action="<?= $escape($buildUserTabUrl(['user' => (int) $selectedUser['id']])) ?>"
-                        onsubmit="return confirm('<?= $escape($selectedBlocked ? 'Разблокировать пользователя?' : 'Заблокировать пользователя?') ?>');"
+                        data-confirm="<?= $escape($selectedBlocked ? 'Разблокировать пользователя?' : 'Заблокировать пользователя?') ?>"
                       >
                         <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
                         <input type="hidden" name="admin_action" value="toggle_user_block">
@@ -1086,7 +1321,7 @@ $assetVersion = '20260413-1';
                       <form
                         method="post"
                         action="<?= $escape($buildUserTabUrl()) ?>"
-                        onsubmit="return confirm('Удалить пользователя и всю его активность без возможности восстановления?');"
+                        data-confirm="Удалить пользователя и всю его активность без возможности восстановления?"
                       >
                         <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
                         <input type="hidden" name="admin_action" value="delete_user">
@@ -1159,7 +1394,7 @@ $assetVersion = '20260413-1';
                         </label>
                         <label class="admin-field admin-field-full">
                           <span>Аватар</span>
-                          <input type="text" name="avatar_path" value="<?= $escape((string) ($currentUserForm['avatarPath'] ?? '')) ?>" placeholder="img/people/image_2025-11-10_00-02-43.png">
+                          <input type="text" name="avatar_path" value="<?= $escape((string) ($currentUserForm['avatarPath'] ?? '')) ?>" placeholder="<?= $escape(akino_default_avatar_path()) ?>">
                         </label>
                       </div>
 
@@ -1323,6 +1558,7 @@ $assetVersion = '20260413-1';
             </div>
 
             <div class="admin-management-grid">
+              <?php if (admin_can($adminUser, 'admins.manage')): ?>
               <section class="admin-panel-card">
                 <div class="admin-form-head">
                   <div>
@@ -1348,7 +1584,7 @@ $assetVersion = '20260413-1';
                   <div class="admin-inline-grid">
                     <label class="admin-field admin-field-full">
                       <span>Логин</span>
-                      <input type="text" name="login" value="<?= $escape((string) $newAdminForm['login']) ?>" placeholder="editor_akino" required>
+                      <input type="text" name="login" value="<?= $escape((string) $newAdminForm['login']) ?>" placeholder="editor_akino" maxlength="60" required>
                     </label>
                     <label class="admin-field admin-field-full">
                       <span>Имя администратора</span>
@@ -1356,15 +1592,25 @@ $assetVersion = '20260413-1';
                     </label>
                     <label class="admin-field admin-field-full">
                       <span>Аватар</span>
-                      <input type="text" name="avatar_path" value="<?= $escape((string) $newAdminForm['avatar_path']) ?>" placeholder="img/people/image_2025-11-10_00-02-43.png">
+                      <input type="text" name="avatar_path" value="<?= $escape((string) $newAdminForm['avatar_path']) ?>" placeholder="<?= $escape(akino_default_avatar_path()) ?>">
+                    </label>
+                    <label class="admin-field admin-field-full">
+                      <span>Роль и доступ</span>
+                      <select name="role" required>
+                        <?php foreach ($roleDefinitions as $roleKey => $roleMeta): ?>
+                          <option value="<?= $escape($roleKey) ?>"<?= $newAdminForm['role'] === $roleKey ? ' selected' : '' ?>>
+                            <?= $escape((string) $roleMeta['label']) ?> — <?= $escape((string) $roleMeta['description']) ?>
+                          </option>
+                        <?php endforeach; ?>
+                      </select>
                     </label>
                     <label class="admin-field admin-field-full">
                       <span>Пароль</span>
-                      <input type="password" name="password" required>
+                      <input type="password" name="password" minlength="12" maxlength="128" required>
                     </label>
                     <label class="admin-field admin-field-full">
                       <span>Повтор пароля</span>
-                      <input type="password" name="password_confirm" required>
+                      <input type="password" name="password_confirm" minlength="12" maxlength="128" required>
                     </label>
                   </div>
 
@@ -1373,6 +1619,7 @@ $assetVersion = '20260413-1';
                   </div>
                 </form>
               </section>
+              <?php endif; ?>
 
               <section class="admin-panel-card" id="adminPasswordForm">
                 <div class="admin-form-head">
@@ -1399,15 +1646,15 @@ $assetVersion = '20260413-1';
                   <div class="admin-inline-grid">
                     <label class="admin-field admin-field-full">
                       <span>Текущий пароль</span>
-                      <input type="password" name="current_password" required>
+                      <input type="password" name="current_password" maxlength="128" required>
                     </label>
                     <label class="admin-field admin-field-full">
                       <span>Новый пароль</span>
-                      <input type="password" name="new_password" required>
+                      <input type="password" name="new_password" minlength="12" maxlength="128" required>
                     </label>
                     <label class="admin-field admin-field-full">
                       <span>Повтор нового пароля</span>
-                      <input type="password" name="new_password_confirm" required>
+                      <input type="password" name="new_password_confirm" minlength="12" maxlength="128" required>
                     </label>
                   </div>
 
@@ -1419,6 +1666,7 @@ $assetVersion = '20260413-1';
             </div>
           </section>
 
+          <?php if (admin_can($adminUser, 'admins.manage')): ?>
           <section class="admin-section">
             <div class="admin-section-head">
               <div>
@@ -1435,7 +1683,7 @@ $assetVersion = '20260413-1';
                   <article class="admin-account-card">
                     <div class="admin-account-head">
                       <img
-                        src="<?= $escape((string) ($account['avatar_path'] ?: 'img/people/image_2025-11-10_00-02-43.png')) ?>"
+                        src="<?= $escape(akino_avatar_display_path($account['avatar_path'] ?? null)) ?>"
                         alt="<?= $escape((string) ($account['display_name'] ?? 'Администратор')) ?>"
                         class="admin-user-avatar"
                       >
@@ -1446,10 +1694,234 @@ $assetVersion = '20260413-1';
                     </div>
 
                     <div class="admin-account-meta">
+                      <span>Роль: <?= $escape(admin_role_label((string) ($account['role'] ?? 'auditor'))) ?></span>
                       <span>Последний вход: <?= $escape(admin_format_datetime($account['last_login_at'] ?? null)) ?></span>
                       <span>Создан: <?= $escape(admin_format_datetime($account['created_at'] ?? null)) ?></span>
                     </div>
+
+                    <form method="post" class="admin-account-role-form">
+                      <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
+                      <input type="hidden" name="admin_action" value="change_admin_role">
+                      <input type="hidden" name="account_id" value="<?= (int) ($account['id'] ?? 0) ?>">
+                      <label class="admin-field admin-field-full">
+                        <span>Изменить роль</span>
+                        <select name="role">
+                          <?php foreach ($roleDefinitions as $roleKey => $roleMeta): ?>
+                            <option value="<?= $escape($roleKey) ?>"<?= (string) ($account['role'] ?? 'auditor') === $roleKey ? ' selected' : '' ?>>
+                              <?= $escape((string) $roleMeta['label']) ?>
+                            </option>
+                          <?php endforeach; ?>
+                        </select>
+                      </label>
+                      <button type="submit" class="admin-btn admin-btn-secondary">Сохранить роль</button>
+                    </form>
                   </article>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+          </section>
+          <?php endif; ?>
+        <?php elseif ($activeTab === 'security'): ?>
+          <?php
+          $trendCounts = array_map(static fn (array $item): int => (int) ($item['count'] ?? 0), $securityDashboard['trend']);
+          $trendMax = max(1, $trendCounts ? max($trendCounts) : 1);
+          ?>
+          <section class="admin-section">
+            <div class="admin-section-head">
+              <div>
+                <h2>Центр безопасности</h2>
+                <p>Журнал событий, заблокированные попытки, контроль файлов и зашифрованные резервные копии в одном разделе.</p>
+              </div>
+              <span class="admin-security-live"><i></i> Мониторинг активен</span>
+            </div>
+
+            <div class="admin-security-stats">
+              <article class="admin-security-stat">
+                <span>События за 24 часа</span>
+                <strong><?= (int) $securityDashboard['events24h'] ?></strong>
+                <small>Все входы и защитные проверки</small>
+              </article>
+              <article class="admin-security-stat is-warning">
+                <span>Предупреждения за 7 дней</span>
+                <strong><?= (int) $securityDashboard['warnings7d'] ?></strong>
+                <small>Подозрительные или отклонённые действия</small>
+              </article>
+              <article class="admin-security-stat is-danger">
+                <span>Активные блокировки</span>
+                <strong><?= (int) $securityDashboard['blockedNow'] ?></strong>
+                <small>Ограничения по частоте запросов</small>
+              </article>
+              <article class="admin-security-stat<?= (int) $securityDashboard['changedFiles'] > 0 ? ' is-danger' : ' is-success' ?>">
+                <span>Изменённые файлы</span>
+                <strong><?= (int) $securityDashboard['changedFiles'] ?></strong>
+                <small>По последней проверке целостности</small>
+              </article>
+            </div>
+
+            <div class="admin-security-overview">
+              <article class="admin-panel-card">
+                <div class="admin-form-head">
+                  <div>
+                    <h3>События за 7 дней</h3>
+                    <p>Наглядная динамика для отчёта и дипломной демонстрации.</p>
+                  </div>
+                </div>
+                <div class="admin-security-chart" aria-label="График событий безопасности за семь дней">
+                  <?php foreach ($securityDashboard['trend'] as $trendItem): ?>
+                    <?php $barHeight = max(5, (int) round(((int) $trendItem['count'] / $trendMax) * 100)); ?>
+                    <div class="admin-security-chart-column">
+                      <strong><?= (int) $trendItem['count'] ?></strong>
+                      <svg class="admin-security-chart-bar" viewBox="0 0 34 100" preserveAspectRatio="none" aria-hidden="true">
+                        <rect x="0" y="<?= 100 - $barHeight ?>" width="34" height="<?= $barHeight ?>"></rect>
+                      </svg>
+                      <small><?= $escape((string) $trendItem['label']) ?></small>
+                    </div>
+                  <?php endforeach; ?>
+                </div>
+              </article>
+
+              <article class="admin-panel-card">
+                <div class="admin-form-head">
+                  <div>
+                    <h3>Активные источники</h3>
+                    <p>IP-адреса маскируются, полный адрес в интерфейсе не хранится.</p>
+                  </div>
+                </div>
+                <?php if (!$securityDashboard['topSources']): ?>
+                  <div class="admin-empty-card">За последние семь дней источники атак не обнаружены.</div>
+                <?php else: ?>
+                  <div class="admin-security-source-list">
+                    <?php foreach ($securityDashboard['topSources'] as $source): ?>
+                      <div>
+                        <strong><?= $escape((string) ($source['ip_masked'] ?? 'unknown')) ?></strong>
+                        <span><?= (int) ($source['event_count'] ?? 0) ?> событий</span>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php endif; ?>
+              </article>
+            </div>
+          </section>
+
+          <section class="admin-section">
+            <div class="admin-section-head">
+              <div>
+                <h2>Журнал событий</h2>
+                <p>Чувствительные значения, пароли, токены и коды подтверждения в журнал не записываются.</p>
+              </div>
+            </div>
+
+            <?php if (!$securityDashboard['events']): ?>
+              <div class="admin-empty-card">События безопасности пока не зафиксированы.</div>
+            <?php else: ?>
+              <div class="admin-security-event-list">
+                <?php foreach ($securityDashboard['events'] as $event): ?>
+                  <article class="admin-security-event is-<?= $escape((string) ($event['severity'] ?? 'info')) ?>">
+                    <span class="admin-security-event-level"><?= $escape((string) ($event['severity'] ?? 'info')) ?></span>
+                    <div>
+                      <h3><?= $escape((string) ($event['label'] ?? 'Событие безопасности')) ?></h3>
+                      <p>
+                        <?= $escape((string) ($event['actor_label'] ?: $event['actor_type'] ?? 'system')) ?>
+                        · <?= $escape((string) ($event['ip_masked'] ?? 'unknown')) ?>
+                        <?php if (!empty($event['request_path'])): ?>
+                          · <?= $escape((string) $event['request_path']) ?>
+                        <?php endif; ?>
+                      </p>
+                    </div>
+                    <time><?= $escape(admin_format_datetime((string) ($event['created_at'] ?? ''))) ?></time>
+                  </article>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+          </section>
+
+          <section class="admin-section" id="securityBackups">
+            <div class="admin-section-head">
+              <div>
+                <h2>Резервные копии</h2>
+                <p>Данные сохраняются вне публичной папки, шифруются AES-256-GCM и проверяются по SHA-256.</p>
+              </div>
+              <?php if (admin_can($adminUser, 'security.manage')): ?>
+                <form method="post">
+                  <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
+                  <input type="hidden" name="admin_action" value="create_backup">
+                  <button type="submit" class="admin-btn admin-btn-primary">Создать копию</button>
+                </form>
+              <?php endif; ?>
+            </div>
+
+            <?php if (!$securityBackups): ?>
+              <div class="admin-empty-card">Резервные копии ещё не создавались.</div>
+            <?php else: ?>
+              <div class="admin-backup-grid">
+                <?php foreach ($securityBackups as $backup): ?>
+                  <?php
+                  $backupStatus = (string) ($backup['status'] ?? 'created');
+                  $backupSize = (int) ($backup['size_bytes'] ?? 0);
+                  ?>
+                  <article class="admin-backup-card">
+                    <div class="admin-backup-card-head">
+                      <div>
+                        <h3>Копия #<?= (int) ($backup['id'] ?? 0) ?></h3>
+                        <p><?= $escape(admin_format_datetime((string) ($backup['created_at'] ?? ''))) ?></p>
+                      </div>
+                      <span class="admin-status-pill<?= $backupStatus === 'verified' ? ' is-active' : ($backupStatus === 'failed' ? ' is-blocked' : ' is-inactive') ?>">
+                        <?= $backupStatus === 'verified' ? 'Проверена' : ($backupStatus === 'failed' ? 'Ошибка' : 'Создана') ?>
+                      </span>
+                    </div>
+                    <div class="admin-account-meta">
+                      <span>Размер: <?= number_format($backupSize / 1024, 1, '.', ' ') ?> КБ</span>
+                      <span>SHA-256: <?= $escape(substr((string) ($backup['checksum'] ?? ''), 0, 16)) ?>…</span>
+                      <span>Создал: <?= $escape((string) ($backup['admin_name'] ?: 'Система')) ?></span>
+                    </div>
+                    <?php if (admin_can($adminUser, 'security.manage')): ?>
+                      <form method="post" class="admin-backup-actions">
+                        <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
+                        <input type="hidden" name="admin_action" value="verify_backup">
+                        <input type="hidden" name="backup_id" value="<?= (int) ($backup['id'] ?? 0) ?>">
+                        <button type="submit" class="admin-btn admin-btn-secondary">Проверить копию</button>
+                      </form>
+                    <?php endif; ?>
+                  </article>
+                <?php endforeach; ?>
+              </div>
+            <?php endif; ?>
+          </section>
+
+          <section class="admin-section" id="fileIntegrity">
+            <div class="admin-section-head">
+              <div>
+                <h2>Контроль целостности файлов</h2>
+                <p>Эталонные SHA-256 хеши позволяют обнаружить подмену или удаление серверного кода.</p>
+              </div>
+              <?php if (admin_can($adminUser, 'security.manage')): ?>
+                <div class="admin-form-actions">
+                  <form method="post">
+                    <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
+                    <input type="hidden" name="admin_action" value="record_integrity_baseline">
+                    <button type="submit" class="admin-btn admin-btn-secondary">Обновить эталон</button>
+                  </form>
+                  <form method="post">
+                    <input type="hidden" name="csrf_token" value="<?= $escape(admin_csrf_token()) ?>">
+                    <input type="hidden" name="admin_action" value="scan_integrity">
+                    <button type="submit" class="admin-btn admin-btn-primary">Запустить проверку</button>
+                  </form>
+                </div>
+              <?php endif; ?>
+            </div>
+
+            <?php if (!$integrityFiles): ?>
+              <div class="admin-empty-card">Эталон файлов ещё не создан.</div>
+            <?php else: ?>
+              <div class="admin-integrity-list">
+                <?php foreach ($integrityFiles as $fileState): ?>
+                  <?php $fileStatus = (string) ($fileState['status'] ?? 'clean'); ?>
+                  <div class="admin-integrity-row">
+                    <span class="admin-integrity-indicator is-<?= $escape($fileStatus) ?>"></span>
+                    <strong><?= $escape((string) ($fileState['path'] ?? '')) ?></strong>
+                    <span><?= $fileStatus === 'clean' ? 'Без изменений' : ($fileStatus === 'missing' ? 'Файл отсутствует' : 'Файл изменён') ?></span>
+                    <time><?= $escape(admin_format_datetime((string) ($fileState['checked_at'] ?? ''))) ?></time>
+                  </div>
                 <?php endforeach; ?>
               </div>
             <?php endif; ?>
@@ -1528,5 +2000,6 @@ $assetVersion = '20260413-1';
       <?php endif; ?>
     </main>
   </div>
+  <script src="js/admin.js?v=20260614-1"></script>
 </body>
 </html>

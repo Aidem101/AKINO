@@ -4,6 +4,11 @@ require_once __DIR__ . '/../src/bootstrap.php';
 require_once __DIR__ . '/includes/movie-cards.php';
 
 $query = trim((string) ($_GET['q'] ?? ''));
+
+if (mb_strlen($query, 'UTF-8') > 80) {
+    $query = mb_substr($query, 0, 80, 'UTF-8');
+}
+
 $type = trim((string) ($_GET['type'] ?? ''));
 $page = normalize_page_number($_GET['page'] ?? 1);
 $selectedType = in_array($type, ['movie', 'series'], true) ? $type : '';

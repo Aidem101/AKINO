@@ -18,5 +18,5 @@ return [
     'login' => $env('AKINO_ADMIN_LOGIN', 'akino_admin'),
     'password' => $env('AKINO_ADMIN_PASSWORD', ''),
     'display_name' => $env('AKINO_ADMIN_DISPLAY_NAME', 'Akino admin'),
-    'avatar_path' => $env('AKINO_ADMIN_AVATAR_PATH', 'img/people/image_2025-11-10_00-02-43.png'),
+    'avatar_path' => $env('AKINO_ADMIN_AVATAR_PATH', 'img/avatars/default-neutral.svg'),
 ];

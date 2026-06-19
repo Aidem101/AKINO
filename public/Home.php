@@ -28,21 +28,13 @@ require __DIR__ . '/includes/page-top.php';
 <section class="film-mini">
   <h1>Рекомендуем</h1>
 
-  <div class="mini-track">
-    <?php foreach ($recommendedMovies as $movie): ?>
-      <?php render_mini_card($movie); ?>
-    <?php endforeach; ?>
-  </div>
+  <?php render_mini_track($recommendedMovies); ?>
 </section>
 
 <section class="film-mini">
   <h1>Новое</h1>
 
-  <div class="mini-track">
-    <?php foreach ($newMovies as $movie): ?>
-      <?php render_mini_card($movie); ?>
-    <?php endforeach; ?>
-  </div>
+  <?php render_mini_track($newMovies); ?>
 </section>
 
 <section class="film-select">
@@ -57,11 +49,7 @@ require __DIR__ . '/includes/page-top.php';
 <section class="film-mini">
   <h1>Фильмы для вас</h1>
 
-  <div class="mini-track">
-    <?php foreach ($forYouMovies as $movie): ?>
-      <?php render_mini_card($movie); ?>
-    <?php endforeach; ?>
-  </div>
+  <?php render_mini_track($forYouMovies); ?>
 </section>
 
 <section class="genars">
@@ -96,5 +84,5 @@ require __DIR__ . '/includes/page-top.php';
 
 <?php require __DIR__ . '/includes/auth-modal.php'; ?>
 <?php require __DIR__ . '/includes/footer.php'; ?>
-<script src="js/home.js?v=20260420-1"></script>
+<script src="js/home.js?v=20260619-3"></script>
 <?php require __DIR__ . '/includes/page-bottom.php'; ?>

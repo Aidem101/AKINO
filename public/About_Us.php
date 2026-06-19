@@ -1,69 +1,79 @@
 <?php
-$pageTitle = 'О нас - AKINO';
-$bodyClass = '';
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/../src/bootstrap.php';
+
+$pageTitle = 'О сервисе - AKINO';
+$bodyClass = 'info-page-body';
 $activeNav = '';
+$escape = static fn (string $value): string => htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+
+$sections = [
+    [
+        'title' => 'О AKINO',
+        'paragraphs' => [
+            'AKINO — онлайн-кинотеатр с библиотекой фильмов и сериалов, созданный для удобного поиска, сохранения избранного и продолжения просмотра с того места, где вы остановились.',
+            'Сервис объединяет каталог, персональный кабинет и инструменты управления доступом в едином, понятном интерфейсе.',
+        ],
+    ],
+    [
+        'title' => 'Что доступно пользователю',
+        'items' => [
+            'каталог фильмов и сериалов с поиском, сортировкой и фильтрами;',
+            'детальные карточки тайтлов с описанием, жанром, годом выпуска и возрастным рейтингом;',
+            'личный кабинет, избранное, история и сохранение прогресса просмотра;',
+            'единая подписка для доступа к функциям, доступным в текущей версии сервиса.',
+        ],
+    ],
+    [
+        'title' => 'Принципы сервиса',
+        'paragraphs' => [
+            'Мы стремимся к прозрачным правилам, уважительному отношению к данным пользователя и спокойному просмотру без перегруженного интерфейса.',
+            'Состав каталога, доступность отдельных функций и условия использования могут обновляться по мере развития AKINO. Актуальные правила публикуются в справочных разделах сайта.',
+        ],
+    ],
+];
+
 require __DIR__ . '/includes/page-top.php';
 ?>
-<main class="catalog-page">
-    <section class="help">
-        <h1>Помощь</h1>
-      
-        <details class="accordion">
-          <summary >О нас</summary>
-          <div class="content">
-            <p>
-                AKINO — онлайн-кинотеатр, посвящённый авторскому и короткометражному кино. Здесь собраны уникальные работы независимых режиссёров, фестивальные фильмы и студенческие проекты, которые редко можно увидеть на больших экранах. Платформа создана для тех, кто ищет новое киноязык, свежие идеи и живые эмоции. Каждый пользователь может создать свой профиль, получать персональные рекомендации и сохранять избранные фильмы..
-            </p>
-          </div>
-        </details>
-      
-        <details class="accordion">
-          <summary>Как смотреть фильмы в AKINO</summary>
-          <div class="content">
-            <p>
-                Оформите подписку и получите доступ к постоянно обновляемой библиотеке авторских и короткометражных фильмов без рекламы. Новые релизы и фестивальные премьеры появляются каждую неделю, а некоторые картины можно посмотреть эксклюзивно только на AKINO.
-            </p>
-          </div>
-        </details>
-      
-        <details class="accordion">
-          <summary>Где смотреть AKINO</summary>
-          <div class="content">
-            <p>
-                Смотрите любимые фильмы на любом устройстве: смартфоне, планшете, компьютере. Один аккаунт можно использовать на нескольких устройствах — выбирайте, где удобно, и наслаждайтесь настоящим авторским кино.
-            </p>
-          </div>
-        </details>
-      </section>
-  </main>
+<main class="info-page about-page">
+  <article class="info-page-card">
+    <header class="info-page-header">
+      <p class="info-page-document">О сервисе</p>
+      <h1>AKINO — кино, к которому легко вернуться</h1>
+      <p class="info-page-lead">Собираем библиотеку фильмов и сериалов в одном месте и делаем путь от выбора до просмотра понятным и спокойным.</p>
+    </header>
 
-  <?php require __DIR__ . '/includes/footer.php'; ?>
+    <div class="info-page-sections">
+      <?php foreach ($sections as $section): ?>
+        <section class="info-page-section">
+          <h2><?= $escape($section['title']) ?></h2>
+          <?php foreach ($section['paragraphs'] ?? [] as $paragraph): ?>
+            <p><?= $escape($paragraph) ?></p>
+          <?php endforeach; ?>
+          <?php if (!empty($section['items'])): ?>
+            <ul>
+              <?php foreach ($section['items'] as $item): ?>
+                <li><?= $escape($item) ?></li>
+              <?php endforeach; ?>
+            </ul>
+          <?php endif; ?>
+        </section>
+      <?php endforeach; ?>
+    </div>
 
-  <script>
+    <aside class="info-page-note" aria-label="Возрастное ограничение">
+      <h2>Возрастная маркировка</h2>
+      <p>Возрастной рейтинг указан в карточке каждого тайтла. Пожалуйста, учитывайте его при выборе контента.</p>
+    </aside>
 
+    <div class="info-page-actions">
+      <a href="Films_Catalog.php" class="subscribe-btn">Открыть каталог</a>
+      <a href="Info.php?page=contacts" class="info-page-secondary">Связаться с поддержкой</a>
+    </div>
+  </article>
+</main>
 
-// Знак вопроса перед addEventListener проверит, не null ли переменная
-    document.addEventListener('DOMContentLoaded', function() {
-        const openBtn = document.getElementById('openMenu');
-        const closeBtn = document.getElementById('closeMenu');
-        const menu = document.getElementById('mobileMenu');
-
-        if (openBtn && menu) {
-            openBtn.addEventListener('click', function() {
-                console.log("Меню открывается"); // Проверка в консоли (F12)
-                menu.classList.add('open');
-                document.body.style.overflow = 'hidden';
-            });
-        }
-
-        if (closeBtn && menu) {
-            closeBtn.addEventListener('click', function() {
-                console.log("Меню закрывается");
-                menu.classList.remove('open');
-                document.body.style.overflow = '';
-            });
-        }
-    });
-  </script>
-
+<?php require __DIR__ . '/includes/footer.php'; ?>
 <?php require __DIR__ . '/includes/page-bottom.php'; ?>

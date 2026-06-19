@@ -84,6 +84,28 @@ function activate_subscription(int $userId): array
     return get_user_subscription_payload($userId);
 }
 
+function cancel_subscription(int $userId): array
+{
+    $current = get_active_subscription_row($userId);
+
+    if (!$current) {
+        return get_user_subscription_payload($userId);
+    }
+
+    $statement = db()->prepare(
+        'UPDATE user_subscriptions
+         SET ends_at = DATE_SUB(NOW(), INTERVAL 1 SECOND),
+             updated_at = NOW()
+         WHERE id = :id AND user_id = :user_id'
+    );
+    $statement->execute([
+        'id' => (int) $current['id'],
+        'user_id' => $userId,
+    ]);
+
+    return get_user_subscription_payload($userId);
+}
+
 function get_user_subscription_payload(int $userId): array
 {
     $subscription = get_active_subscription_row($userId);

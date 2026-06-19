@@ -15,17 +15,19 @@ try {
     $currentUser = null;
 }
 
-$defaultAvatar = 'img/people/image_2025-11-10_00-02-43.png';
+$defaultAvatar = akino_default_avatar_path();
 $profileLabel = $currentUser['name'] ?? 'Логин';
 $profileAvatar = $currentUser['avatar'] ?? $defaultAvatar;
 $profileHref = $currentUser ? 'Cabinet.php' : 'Home.php?auth=required';
 $subscriptionHref = $currentUser ? 'Cabinet.php?tab=subscription' : 'Home.php?auth=required';
 $subscriptionLabel = !empty($currentUser['subscription']['active']) ? 'Продлить' : 'Подписка';
 $headerSearchQuery = trim((string) ($_GET['q'] ?? ($headerSearchQuery ?? '')));
-$assetVersion = '20260521-5';
-$bodyClassAttribute = $bodyClass !== ''
-    ? ' class="' . htmlspecialchars($bodyClass, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"'
-    : '';
+$assetVersion = '20260619-4';
+$bodyClasses = array_values(array_filter([
+    $bodyClass,
+    'has-fixed-header',
+]));
+$bodyClassAttribute = ' class="' . htmlspecialchars(implode(' ', $bodyClasses), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"';
 
 header('Content-Type: text/html; charset=UTF-8');
 ?>
@@ -34,10 +36,17 @@ header('Content-Type: text/html; charset=UTF-8');
 <head>
   <meta charset="UTF-8">
   <title><?= htmlspecialchars($pageTitle, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></title>
+  <meta name="csrf-token" content="<?= htmlspecialchars(akino_csrf_token(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css?v=<?= htmlspecialchars($assetVersion, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0"
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  >
 </head>
 <body<?= $bodyClassAttribute ?> data-authenticated="<?= $currentUser ? '1' : '0' ?>">
   <header class="main-header">
@@ -65,10 +74,11 @@ header('Content-Type: text/html; charset=UTF-8');
         value="<?= htmlspecialchars($headerSearchQuery, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
         placeholder="Фильмы и сериалы"
         autocomplete="off"
+        maxlength="80"
       >
     </form>
 
-    <a href="<?= htmlspecialchars($subscriptionHref, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" class="subscribe-btn desktop-only">
+    <a href="<?= htmlspecialchars($subscriptionHref, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" class="subscribe-btn header-subscription-btn desktop-only">
       <?= htmlspecialchars($subscriptionLabel, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>
     </a>
 

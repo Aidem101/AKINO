@@ -6,6 +6,7 @@
   const saveState = document.getElementById('watchSaveState');
   const endOverlay = document.getElementById('watchEndOverlay');
   const cancelAutoNext = document.getElementById('watchCancelAutoNext');
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
   if (!state || !state.hasAccess || !player) {
     return;
@@ -114,6 +115,7 @@
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
           'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRF-Token': csrfToken,
         },
         body: new URLSearchParams({
           movieId: String(state.movieId || 0),

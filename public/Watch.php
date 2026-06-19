@@ -34,6 +34,7 @@ $selectedEpisode = $context['selectedEpisode'] ?? null;
 $progress = ($context !== null && $hasAccess)
     ? fetch_watch_progress($userId, $movieId, $selectedEpisode['id'] ?? null)
     : watch_progress_default();
+$hasStream = $context !== null && $hasAccess && !empty($context['streamUrl']);
 $streamMimeType = $context !== null ? playback_stream_mime_type((string) ($context['streamUrl'] ?? '')) : 'video/mp4';
 
 if ($context !== null && $hasAccess) {
@@ -99,8 +100,8 @@ require __DIR__ . '/includes/page-top.php';
       </div>
 
       <div class="watch-player-card">
-        <div class="watch-player-frame">
-          <?php if ($hasAccess && !empty($context['streamUrl'])): ?>
+        <div class="watch-player-frame<?= $hasStream ? '' : ' has-lock' ?>">
+          <?php if ($hasStream): ?>
             <video
               id="akinoPlayer"
               class="watch-video"
@@ -132,7 +133,12 @@ require __DIR__ . '/includes/page-top.php';
               </div>
             </div>
           <?php else: ?>
-            <div class="watch-player-lock" style="background-image: linear-gradient(180deg, rgba(8,10,15,0.25), rgba(8,10,15,0.92)), url('<?= akino_escape((string) ($context['posterPath'] ?? '')) ?>');">
+            <div class="watch-player-lock">
+              <img
+                src="<?= akino_escape((string) ($context['posterPath'] ?? '')) ?>"
+                alt=""
+                class="watch-player-lock-backdrop"
+              >
               <div class="watch-lock-copy">
                 <h2>Нужна активная подписка</h2>
                 <p>Подключите AKINO, чтобы открыть просмотр и сохранять прогресс между фильмами и сериями.</p>
@@ -157,11 +163,12 @@ require __DIR__ . '/includes/page-top.php';
             </span>
           </div>
           <div class="watch-progress-bar">
-            <span
+            <progress
               class="watch-progress-fill"
               id="watchProgressFill"
-              style="width: <?= number_format((float) ($progress['completedPercent'] ?? 0), 2, '.', '') ?>%;"
-            ></span>
+              max="100"
+              value="<?= number_format((float) ($progress['completedPercent'] ?? 0), 2, '.', '') ?>"
+            ></progress>
           </div>
         </div>
         <?php endif; ?>
@@ -252,18 +259,22 @@ require __DIR__ . '/includes/page-top.php';
   <?php if ($relatedMovies): ?>
     <section class="film-mini">
       <h1>Смотрите также</h1>
-      <div class="mini-track">
-        <?php foreach ($relatedMovies as $relatedMovie): ?>
-          <?php render_mini_card($relatedMovie); ?>
-        <?php endforeach; ?>
-      </div>
+      <?php render_mini_track($relatedMovies); ?>
     </section>
   <?php endif; ?>
 
-  <script>
-    window.AKINO_WATCH_STATE = <?= json_encode($watchState, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?>;
+  <script nonce="<?= akino_escape(akino_csp_nonce()) ?>">
+    window.AKINO_WATCH_STATE = <?= json_encode(
+        $watchState,
+        JSON_UNESCAPED_UNICODE
+        | JSON_UNESCAPED_SLASHES
+        | JSON_HEX_TAG
+        | JSON_HEX_AMP
+        | JSON_HEX_APOS
+        | JSON_HEX_QUOT
+    ) ?>;
   </script>
-  <script src="js/watch.js?v=20260324-1"></script>
+  <script src="js/watch.js?v=20260614-1"></script>
 <?php endif; ?>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>
