@@ -106,6 +106,18 @@ try {
         }
 
         $pdo = setup_mysql_pdo($config, false);
+        $databaseName = (string) ($config['database'] ?? '');
+
+        if ($databaseName === '' || !preg_match('/^[a-zA-Z0-9_]+$/', $databaseName)) {
+            throw new RuntimeException('Invalid database name.');
+        }
+
+        $quotedDatabase = '`' . str_replace('`', '``', $databaseName) . '`';
+        $pdo->exec(
+            'CREATE DATABASE IF NOT EXISTS ' . $quotedDatabase
+            . ' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+        );
+        $pdo->exec('USE ' . $quotedDatabase);
         $sql = file_get_contents($schemaPath);
 
         if ($sql === false) {
@@ -113,6 +125,10 @@ try {
         }
 
         foreach (setup_sql_statements($sql) as $statement) {
+            if (preg_match('/^(?:CREATE\s+DATABASE|USE)\b/i', $statement)) {
+                continue;
+            }
+
             $pdo->exec($statement);
         }
 
