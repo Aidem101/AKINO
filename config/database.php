@@ -30,12 +30,50 @@ $envList = static function (string $name) use ($env): array {
     return array_values(array_filter(array_map('trim', explode(',', $value))));
 };
 
+$databaseUrl = trim($env('AKINO_DATABASE_URL'));
+
+if ($databaseUrl === '') {
+    $databaseUrl = trim($env('DATABASE_URL'));
+}
+
+if ($databaseUrl === '') {
+    $databaseUrl = trim($env('MYSQL_URL'));
+}
+
+$urlConfig = [];
+
+if ($databaseUrl !== '') {
+    $parts = parse_url($databaseUrl);
+
+    if (is_array($parts) && in_array(strtolower((string) ($parts['scheme'] ?? '')), ['mysql', 'mariadb'], true)) {
+        $urlConfig = [
+            'host' => (string) ($parts['host'] ?? ''),
+            'port' => (int) ($parts['port'] ?? 3306),
+            'database' => rawurldecode(ltrim((string) ($parts['path'] ?? ''), '/')),
+            'username' => rawurldecode((string) ($parts['user'] ?? '')),
+            'password' => rawurldecode((string) ($parts['pass'] ?? '')),
+        ];
+    }
+}
+
+$envOrUrl = static function (string $envName, string $urlKey, string $default = '') use ($env, $urlConfig): string {
+    $value = trim($env($envName));
+
+    if ($value !== '') {
+        return $value;
+    }
+
+    $urlValue = trim((string) ($urlConfig[$urlKey] ?? ''));
+
+    return $urlValue !== '' ? $urlValue : $default;
+};
+
 return [
-    'host' => $env('AKINO_DB_HOST', 'mysql-8.0'),
-    'port' => $envInt('AKINO_DB_PORT', 3306),
-    'database' => $env('AKINO_DB_DATABASE', 'akino_app'),
-    'username' => $env('AKINO_DB_USERNAME', 'akino_app_user'),
-    'password' => $env('AKINO_DB_PASSWORD', ''),
+    'host' => $envOrUrl('AKINO_DB_HOST', 'host', 'mysql-8.0'),
+    'port' => $envInt('AKINO_DB_PORT', (int) ($urlConfig['port'] ?? 3306)),
+    'database' => $envOrUrl('AKINO_DB_DATABASE', 'database', 'akino_app'),
+    'username' => $envOrUrl('AKINO_DB_USERNAME', 'username', 'akino_app_user'),
+    'password' => $envOrUrl('AKINO_DB_PASSWORD', 'password'),
     'charset' => $env('AKINO_DB_CHARSET', 'utf8mb4'),
     'socket' => $env('AKINO_DB_SOCKET', ''),
     'fallback_hosts' => $envList('AKINO_DB_FALLBACK_HOSTS'),

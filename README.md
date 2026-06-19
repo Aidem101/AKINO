@@ -16,14 +16,10 @@ AKINO - учебный прототип онлайн-кинотеатра. В п
 
 1. В Railway откройте проект с MySQL и нажмите **New** -> **GitHub Repo**.
 2. Выберите репозиторий `Aidem101/AKINO` и ветку `main`.
-3. В переменных нового сервиса укажите:
+3. В переменных нового сервиса добавьте ссылку на URL базы:
 
 ```text
-AKINO_DB_HOST=${{MySQL.MYSQLHOST}}
-AKINO_DB_PORT=${{MySQL.MYSQLPORT}}
-AKINO_DB_DATABASE=${{MySQL.MYSQLDATABASE}}
-AKINO_DB_USERNAME=${{MySQL.MYSQLUSER}}
-AKINO_DB_PASSWORD=${{MySQL.MYSQLPASSWORD}}
+AKINO_DATABASE_URL=${{MySQL.MYSQL_URL}}
 AKINO_APP_ENV=production
 AKINO_TRUST_PROXY=1
 AKINO_RUNTIME_BOOTSTRAP=1
