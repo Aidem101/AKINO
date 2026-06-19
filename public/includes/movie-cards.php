@@ -109,6 +109,43 @@ if (!function_exists('render_mini_card')) {
     }
 }
 
+if (!function_exists('render_mini_track')) {
+    function render_mini_track(array $movies): void
+    {
+        ?>
+        <div class="mini-track-shell" data-mini-carousel>
+          <button
+            type="button"
+            class="mini-track-arrow mini-track-arrow-prev"
+            data-mini-prev
+            aria-label="Прокрутить ряд назад"
+            disabled
+          >
+            <svg viewBox="0 0 24 40" aria-hidden="true" focusable="false">
+              <path d="M18 4 6 20l12 16"></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="mini-track-arrow mini-track-arrow-next"
+            data-mini-next
+            aria-label="Прокрутить ряд вперёд"
+          >
+            <svg viewBox="0 0 24 40" aria-hidden="true" focusable="false">
+              <path d="m6 4 12 16L6 36"></path>
+            </svg>
+          </button>
+
+          <div class="mini-track" data-mini-track>
+            <?php foreach ($movies as $movie): ?>
+              <?php render_mini_card($movie); ?>
+            <?php endforeach; ?>
+          </div>
+        </div>
+        <?php
+    }
+}
+
 if (!function_exists('render_poster_card')) {
     function render_poster_card(array $movie): void
     {
@@ -162,7 +199,7 @@ if (!function_exists('render_continue_watching_card')) {
             <div class="continue-watch-copy">
               <h3><?= akino_escape((string) ($item['title'] ?? 'Фильм')) ?></h3>
               <div class="continue-watch-progress" aria-hidden="true">
-                <span style="width: <?= number_format($progressWidth, 2, '.', '') ?>%;"></span>
+                <progress max="100" value="<?= number_format($progressWidth, 2, '.', '') ?>"></progress>
               </div>
             </div>
           </a>

@@ -40,4 +40,10 @@ return [
     'socket' => $env('AKINO_DB_SOCKET', ''),
     'fallback_hosts' => $envList('AKINO_DB_FALLBACK_HOSTS'),
     'timeout' => $envInt('AKINO_DB_TIMEOUT', 1),
+    'ssl_ca' => $env('AKINO_DB_SSL_CA', ''),
+    'ssl_verify_server_cert' => !in_array(
+        strtolower(trim($env('AKINO_DB_SSL_VERIFY_SERVER_CERT', '1'))),
+        ['0', 'false', 'no', 'off'],
+        true
+    ),
 ];

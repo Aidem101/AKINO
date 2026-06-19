@@ -22,11 +22,14 @@
   const resendLink = $('.resend-link');
   const desktopProfile = $('.profile');
   const mobileAvatar = $('.mobile-avatar');
+  const defaultAvatar = 'img/avatars/default-neutral.svg';
+  const legacyDefaultAvatar = 'img/people/image_2025-11-10_00-02-43.png';
   const subscribeButton = $('.subscribe-btn');
   const closeButton = modal ? $('.clos-but', modal) : null;
   const menuLinks = $$('.menu-link');
   const cabinetMenuLink = menuLinks.find((link) => link.querySelector('.fa-user'));
   const subscriptionMenuLink = menuLinks.find((link) => link.querySelector('.fa-bag-shopping'));
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
   async function fetchJson(url, options = {}) {
     const response = await fetch(url, {
@@ -54,6 +57,7 @@
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-Token': csrfToken,
       },
       body: new URLSearchParams(data),
     });
@@ -97,8 +101,8 @@
 
   function resetModal() {
     state.requestId = null;
-    stepOne.style.display = 'block';
-    stepTwo.style.display = 'none';
+    stepOne.hidden = false;
+    stepTwo.hidden = true;
     phoneForm.reset();
     codeForm.reset();
     resetCodeInputs();
@@ -137,13 +141,15 @@
     const mobileAvatarImage = mobileAvatar ? $('img', mobileAvatar) : null;
 
     if (state.user) {
+      const avatar = state.user.avatar === legacyDefaultAvatar ? defaultAvatar : state.user.avatar;
+
       desktopProfile.href = 'Cabinet.php';
       desktopProfile.dataset.authenticated = '1';
       profileLabel.textContent = state.user.name;
-      profileImage.src = state.user.avatar;
+      profileImage.src = avatar;
 
       if (mobileAvatarImage) {
-        mobileAvatarImage.src = state.user.avatar;
+        mobileAvatarImage.src = avatar;
       }
 
       subscribeButton.textContent = state.user.subscription.active ? 'Продлить' : 'Подписка';
@@ -155,10 +161,10 @@
       desktopProfile.href = '#';
       desktopProfile.dataset.authenticated = '0';
       profileLabel.textContent = 'Логин';
-      profileImage.src = 'img/people/image_2025-11-10_00-02-43.png';
+      profileImage.src = defaultAvatar;
 
       if (mobileAvatarImage) {
-        mobileAvatarImage.src = 'img/people/image_2025-11-10_00-02-43.png';
+        mobileAvatarImage.src = defaultAvatar;
       }
 
       subscribeButton.textContent = 'Подписка';
@@ -240,8 +246,18 @@
       return;
     }
 
-    if (window.innerWidth <= 700) {
-      track.parentElement?.classList.add('is-native-mobile-slider');
+    const slider = track.parentElement;
+    const isMobileSlider = () => window.innerWidth <= 700;
+    const transition = 'transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+
+    let currentPosition = 0;
+    let isAnimating = false;
+    let mode = null;
+    let wheelHandler = null;
+    let mobileScrollHandler = null;
+    let mobileLoopWidth = 0;
+
+    function centerMobileCard() {
       requestAnimationFrame(() => {
         const activeCard = cards[1] || cards[0];
 
@@ -250,32 +266,98 @@
           inline: 'center',
         });
       });
-      return;
     }
 
-    let currentPosition = 0;
-    let isAnimating = false;
-    const transition = 'transform 0.6s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    function enableMobileSlider() {
+      if (wheelHandler) {
+        track.removeEventListener('wheel', wheelHandler);
+        wheelHandler = null;
+      }
 
-    const clonesStart = cards.slice().reverse().map((card) => card.cloneNode(true));
-    const clonesEnd = cards.map((card) => card.cloneNode(true));
-    track.prepend(...clonesStart);
-    track.append(...clonesEnd);
+      if (mobileScrollHandler) {
+        track.removeEventListener('scroll', mobileScrollHandler);
+        mobileScrollHandler = null;
+      }
+
+      track.replaceChildren(...cards);
+      const clonesStart = cards.map((card) => card.cloneNode(true));
+      const clonesEnd = cards.map((card) => card.cloneNode(true));
+      track.prepend(...clonesStart);
+      track.append(...clonesEnd);
+      track.style.transition = 'none';
+      track.style.transform = 'none';
+      slider?.classList.add('is-native-mobile-slider');
+      mode = 'mobile';
+      mobileLoopWidth = track.children[total * 2].offsetLeft - track.children[total].offsetLeft;
+      mobileScrollHandler = handleMobileScroll;
+      track.addEventListener('scroll', mobileScrollHandler, { passive: true });
+      centerMobileCard();
+    }
+
+    function enableDesktopSlider() {
+      if (mobileScrollHandler) {
+        track.removeEventListener('scroll', mobileScrollHandler);
+        mobileScrollHandler = null;
+      }
+
+      if (mode === 'desktop') {
+        updatePosition(false);
+        return;
+      }
+
+      slider?.classList.remove('is-native-mobile-slider');
+      track.replaceChildren(...cards);
+      track.scrollLeft = 0;
+      currentPosition = 0;
+      isAnimating = false;
+
+      const clonesStart = cards.map((card) => card.cloneNode(true));
+      const clonesEnd = cards.map((card) => card.cloneNode(true));
+      track.prepend(...clonesStart);
+      track.append(...clonesEnd);
+
+      if (!wheelHandler) {
+        wheelHandler = handleSliderWheel;
+        track.addEventListener('wheel', wheelHandler, { passive: false });
+      }
+
+      mode = 'desktop';
+      updatePosition(false);
+      requestAnimationFrame(() => {
+        track.style.transition = transition;
+      });
+    }
 
     function updatePosition(withTransition = true) {
       const gap = parseFloat(getComputedStyle(track).gap || '0');
-      const cardWidth = cards[0].offsetWidth + gap;
-      const visibleCards = window.innerWidth <= 700 ? 1 : 2;
-      const centerOffset = (track.offsetWidth - cardWidth * visibleCards) / 2;
-      const offset = -(currentPosition + total) * cardWidth + centerOffset;
+      const cardWidth = cards[0].offsetWidth;
+      const cardStep = cardWidth + gap;
+      const sliderWidth = track.parentElement?.clientWidth || window.innerWidth;
+      const trackCenterOffset = (track.offsetWidth - sliderWidth) / 2;
+      const visibleCards = Math.min(2, total);
+      const visibleWidth = cardWidth * visibleCards + gap * (visibleCards - 1);
+      const centerOffset = (sliderWidth - visibleWidth) / 2;
+      const offset = trackCenterOffset - (currentPosition + total) * cardStep + centerOffset;
 
       track.style.transition = withTransition ? transition : 'none';
+      if (!withTransition) {
+        track.offsetWidth;
+      }
       track.style.transform = `translateX(${offset}px)`;
+      if (!withTransition) {
+        track.offsetWidth;
+      }
     }
 
     function normalizeLoop() {
-      if (currentPosition <= -total || currentPosition >= total) {
-        currentPosition = 0;
+      if (currentPosition <= -total) {
+        currentPosition += total;
+        updatePosition(false);
+        requestAnimationFrame(() => {
+          track.style.transition = transition;
+        });
+      } else if (currentPosition >= total) {
+        currentPosition -= total;
         updatePosition(false);
         requestAnimationFrame(() => {
           track.style.transition = transition;
@@ -283,36 +365,60 @@
       }
     }
 
-    updatePosition(false);
-    requestAnimationFrame(() => {
-      track.style.transition = transition;
-    });
+    function handleSliderWheel(event) {
+      event.preventDefault();
 
-    track.addEventListener(
-      'wheel',
-      (event) => {
-        event.preventDefault();
+      if (isAnimating) {
+        return;
+      }
 
-        if (isAnimating) {
-          return;
-        }
+      isAnimating = true;
+      const wheelDelta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
 
-        isAnimating = true;
-        currentPosition += event.deltaY > 0 ? 1 : -1;
-        updatePosition(true);
+      if (wheelDelta === 0) {
+        isAnimating = false;
+        return;
+      }
 
-        window.setTimeout(() => {
-          normalizeLoop();
-          isAnimating = false;
-        }, 620);
-      },
-      { passive: false }
-    );
+      currentPosition += wheelDelta > 0 ? 1 : -1;
+      updatePosition(true);
+
+      window.setTimeout(() => {
+        normalizeLoop();
+        isAnimating = false;
+      }, 620);
+    }
+
+    function handleMobileScroll() {
+      if (mode !== 'mobile' || mobileLoopWidth <= 0) {
+        return;
+      }
+
+      const maxScroll = track.scrollWidth - track.clientWidth;
+
+      if (track.scrollLeft <= 1) {
+        track.scrollLeft += mobileLoopWidth;
+      } else if (track.scrollLeft >= maxScroll - 1) {
+        track.scrollLeft -= mobileLoopWidth;
+      }
+    }
+
+    if (isMobileSlider()) {
+      enableMobileSlider();
+    } else {
+      enableDesktopSlider();
+    }
 
     let resizeTimeout = null;
     window.addEventListener('resize', () => {
       window.clearTimeout(resizeTimeout);
-      resizeTimeout = window.setTimeout(() => updatePosition(false), 200);
+      resizeTimeout = window.setTimeout(() => {
+        if (isMobileSlider()) {
+          enableMobileSlider();
+        } else {
+          enableDesktopSlider();
+        }
+      }, 200);
     });
   }
 
@@ -392,8 +498,8 @@
         state.requestId = payload.requestId;
         state.phone = payload.phone;
         displayPhone.textContent = payload.phone;
-        stepOne.style.display = 'none';
-        stepTwo.style.display = 'block';
+        stepOne.hidden = true;
+        stepTwo.hidden = false;
         setFeedback(payload.message, 'success');
         setDemoCode(payload.demoCode);
         digitInputs[0].focus();

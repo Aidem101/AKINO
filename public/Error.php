@@ -17,7 +17,7 @@ require __DIR__ . '/includes/page-top.php';
 
   <?php require __DIR__ . '/includes/footer.php'; ?>
 
-  <script>
+  <script nonce="<?= htmlspecialchars(akino_csp_nonce(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>">
 
 
 // Знак вопроса перед addEventListener проверит, не null ли переменная

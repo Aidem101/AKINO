@@ -2,6 +2,10 @@
 
 declare(strict_types=1);
 
+const AKINO_ADMIN_LOGIN_ATTEMPT_LIMIT = 8;
+const AKINO_ADMIN_LOGIN_WINDOW_SECONDS = 900;
+const AKINO_ADMIN_LOGIN_BLOCK_SECONDS = 1800;
+
 function ensure_admin_support(): void
 {
     static $bootstrapped = false;
@@ -33,12 +37,16 @@ function ensure_admin_support(): void
                 'watch_progress',
                 'admin_accounts',
                 'admin_user_action_logs',
+                'security_events',
+                'security_backups',
+                'security_file_integrity',
             ])
                 && admin_column_exists('users', 'is_admin')
                 && admin_column_exists('users', 'is_blocked')
                 && admin_column_exists('users', 'blocked_at')
                 && admin_column_exists('movies', 'director')
-                && admin_column_exists('movies', 'media_path');
+                && admin_column_exists('movies', 'media_path')
+                && admin_column_exists('admin_accounts', 'role');
 
             if (!$schemaReady) {
                 $GLOBALS['akino_admin_available'] = false;
@@ -75,7 +83,8 @@ function ensure_admin_support(): void
                 login VARCHAR(60) NOT NULL,
                 password_hash VARCHAR(255) NOT NULL,
                 display_name VARCHAR(120) NOT NULL,
-                avatar_path VARCHAR(255) NOT NULL DEFAULT "img/people/image_2025-11-10_00-02-43.png",
+                avatar_path VARCHAR(255) NOT NULL DEFAULT "img/avatars/default-neutral.svg",
+                role VARCHAR(24) NOT NULL DEFAULT "owner",
                 last_login_at DATETIME DEFAULT NULL,
                 created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -83,6 +92,10 @@ function ensure_admin_support(): void
                 UNIQUE KEY admin_accounts_login_unique (login)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
+
+        if (!admin_column_exists('admin_accounts', 'role')) {
+            db()->exec('ALTER TABLE admin_accounts ADD COLUMN role VARCHAR(24) NOT NULL DEFAULT "owner" AFTER avatar_path');
+        }
 
         db()->exec(
             'CREATE TABLE IF NOT EXISTS admin_user_action_logs (
@@ -102,6 +115,10 @@ function ensure_admin_support(): void
                     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
+
+        if (!ensure_security_center_support()) {
+            throw new RuntimeException('Security center schema is unavailable.');
+        }
 
         ensure_admin_default_account();
     } catch (Throwable) {
@@ -145,7 +162,7 @@ function admin_config(): array
         $config['login'] = admin_normalize_login((string) ($config['login'] ?? 'akino_admin'));
         $config['password'] = (string) ($config['password'] ?? '');
         $config['display_name'] = trim((string) ($config['display_name'] ?? 'Администратор AKINO'));
-        $config['avatar_path'] = trim((string) ($config['avatar_path'] ?? 'img/people/image_2025-11-10_00-02-43.png'));
+        $config['avatar_path'] = akino_avatar_display_path($config['avatar_path'] ?? null);
 
         if ($config['login'] === '') {
             $config['login'] = 'akino_admin';
@@ -164,6 +181,100 @@ function admin_normalize_login(string $login): string
     return trim($login);
 }
 
+function admin_role_definitions(): array
+{
+    return [
+        'owner' => [
+            'label' => 'Администратор',
+            'description' => 'Полный доступ, роли, безопасность и резервные копии.',
+        ],
+        'editor' => [
+            'label' => 'Редактор',
+            'description' => 'Управление фильмами, сериалами и сериями.',
+        ],
+        'moderator' => [
+            'label' => 'Модератор',
+            'description' => 'Работа с пользователями и подписками.',
+        ],
+        'auditor' => [
+            'label' => 'Аудитор',
+            'description' => 'Просмотр журнала безопасности без изменения данных.',
+        ],
+    ];
+}
+
+function admin_normalize_role(string $role): string
+{
+    $role = strtolower(trim($role));
+
+    return isset(admin_role_definitions()[$role]) ? $role : 'auditor';
+}
+
+function admin_role_label(string $role): string
+{
+    $role = admin_normalize_role($role);
+
+    return (string) admin_role_definitions()[$role]['label'];
+}
+
+function admin_role_permissions(string $role): array
+{
+    $permissions = [
+        'owner' => ['*'],
+        'editor' => ['account.self', 'content.manage', 'episodes.manage'],
+        'moderator' => ['account.self', 'users.manage', 'subscriptions.view'],
+        'auditor' => ['account.self', 'security.view'],
+    ];
+
+    return $permissions[admin_normalize_role($role)] ?? [];
+}
+
+function admin_can(?array $account, string $permission): bool
+{
+    if (!$account) {
+        return false;
+    }
+
+    $permissions = admin_role_permissions((string) ($account['role'] ?? 'auditor'));
+
+    return in_array('*', $permissions, true) || in_array($permission, $permissions, true);
+}
+
+function admin_tab_permission(string $tab): string
+{
+    return match ($tab) {
+        'content' => 'content.manage',
+        'episodes' => 'episodes.manage',
+        'users' => 'users.manage',
+        'subscriptions' => 'subscriptions.view',
+        'security', 'settings' => 'security.view',
+        default => 'account.self',
+    };
+}
+
+function admin_action_permission(string $action): string
+{
+    return match ($action) {
+        'save_movie', 'delete_movie' => 'content.manage',
+        'save_episode', 'delete_episode' => 'episodes.manage',
+        'save_user_profile', 'toggle_user_block', 'extend_user_subscription', 'delete_user' => 'users.manage',
+        'create_admin', 'change_admin_role' => 'admins.manage',
+        'create_backup', 'verify_backup', 'record_integrity_baseline', 'scan_integrity' => 'security.manage',
+        default => 'account.self',
+    };
+}
+
+function admin_first_allowed_tab(array $account): string
+{
+    foreach (['content', 'episodes', 'users', 'subscriptions', 'security', 'admins', 'settings'] as $tab) {
+        if (admin_can($account, admin_tab_permission($tab))) {
+            return $tab;
+        }
+    }
+
+    return 'admins';
+}
+
 function ensure_admin_default_account(): void
 {
     $config = admin_config();
@@ -177,8 +288,16 @@ function ensure_admin_default_account(): void
     $account = $statement->fetch() ?: null;
 
     if (!$account) {
-        if ($config['password'] === '') {
-            throw new RuntimeException('AKINO_ADMIN_PASSWORD is required to create the default admin account.');
+        if (
+            strlen($config['password']) < 12
+            || in_array(strtolower($config['password']), [
+                'change-me',
+                'password',
+                'admin123',
+                'replace-with-a-strong-password',
+            ], true)
+        ) {
+            throw new RuntimeException('AKINO_ADMIN_PASSWORD must contain at least 12 characters and must not use a default value.');
         }
 
         $insert = db()->prepare(
@@ -187,6 +306,7 @@ function ensure_admin_default_account(): void
                 password_hash,
                 display_name,
                 avatar_path,
+                role,
                 created_at,
                 updated_at
             ) VALUES (
@@ -194,6 +314,7 @@ function ensure_admin_default_account(): void
                 :password_hash,
                 :display_name,
                 :avatar_path,
+                "owner",
                 NOW(),
                 NOW()
             )'
@@ -272,21 +393,70 @@ function admin_current_account(): ?array
     return $account;
 }
 
+function admin_login_rate_identity(): string
+{
+    return request_client_ip();
+}
+
+function admin_login_rate_limited(): bool
+{
+    return security_rate_limit_exceeded(
+        'admin_login',
+        admin_login_rate_identity(),
+        AKINO_ADMIN_LOGIN_ATTEMPT_LIMIT,
+        AKINO_ADMIN_LOGIN_WINDOW_SECONDS
+    );
+}
+
 function admin_login_attempt(string $login, string $password): bool
 {
     ensure_admin_support();
 
-    if (!admin_support_available()) {
+    if (!admin_support_available() || admin_login_rate_limited()) {
+        security_event_log('admin_login_blocked', 'warning', 'admin', null, admin_normalize_login($login));
+
+        return false;
+    }
+
+    if (mb_strlen(trim($login), 'UTF-8') > 60 || strlen($password) > 128) {
+        security_rate_limit_record_failure(
+            'admin_login',
+            admin_login_rate_identity(),
+            AKINO_ADMIN_LOGIN_ATTEMPT_LIMIT,
+            AKINO_ADMIN_LOGIN_WINDOW_SECONDS,
+            AKINO_ADMIN_LOGIN_BLOCK_SECONDS
+        );
+        security_event_log('admin_login_failed', 'warning', 'admin', null, admin_normalize_login($login), [
+            'reason' => 'invalid_input',
+        ]);
+
         return false;
     }
 
     $account = find_admin_account_by_login($login);
+    $passwordHash = $account
+        ? (string) ($account['password_hash'] ?? '')
+        : password_hash('akino-invalid-admin-password', PASSWORD_DEFAULT);
+    $passwordValid = password_verify($password, $passwordHash);
 
-    if (!$account || !password_verify($password, (string) ($account['password_hash'] ?? ''))) {
+    if (!$account || !$passwordValid) {
+        security_rate_limit_record_failure(
+            'admin_login',
+            admin_login_rate_identity(),
+            AKINO_ADMIN_LOGIN_ATTEMPT_LIMIT,
+            AKINO_ADMIN_LOGIN_WINDOW_SECONDS,
+            AKINO_ADMIN_LOGIN_BLOCK_SECONDS
+        );
+        security_event_log('admin_login_failed', 'warning', 'admin', null, admin_normalize_login($login));
+        usleep(random_int(100000, 250000));
+
         return false;
     }
 
+    security_rate_limit_clear('admin_login', admin_login_rate_identity());
     session_regenerate_id(true);
+    akino_rotate_csrf_token();
+    unset($_SESSION['akino_admin_csrf']);
     $_SESSION['admin_account_id'] = (int) $account['id'];
 
     db()->prepare(
@@ -297,17 +467,39 @@ function admin_login_attempt(string $login, string $password): bool
     )->execute([
         'id' => (int) $account['id'],
     ]);
+    security_event_log(
+        'admin_login_success',
+        'info',
+        'admin',
+        (int) $account['id'],
+        (string) ($account['login'] ?? '')
+    );
 
     return true;
 }
 
 function admin_logout(): void
 {
+    $account = admin_current_account();
+
+    if ($account) {
+        security_event_log(
+            'admin_logout',
+            'info',
+            'admin',
+            (int) ($account['id'] ?? 0),
+            (string) ($account['login'] ?? '')
+        );
+    }
+
     unset(
         $_SESSION['admin_account_id'],
         $_SESSION['akino_admin_csrf'],
         $_SESSION['akino_admin_flash']
     );
+
+    session_regenerate_id(true);
+    akino_rotate_csrf_token();
 }
 
 function fetch_admin_accounts(int $limit = 20): array
@@ -364,25 +556,46 @@ function admin_validate_new_account(array $input): array
     $displayName = trim((string) ($input['display_name'] ?? ''));
     $password = (string) ($input['password'] ?? '');
     $passwordConfirm = (string) ($input['password_confirm'] ?? '');
+    $role = strtolower(trim((string) ($input['role'] ?? '')));
 
     if ($login === '') {
         $errors[] = 'Укажите логин администратора латиницей.';
     } elseif (strlen($login) < 3) {
         $errors[] = 'Логин администратора должен быть не короче 3 символов.';
+    } elseif (strlen($login) > 60) {
+        $errors[] = 'Логин администратора не должен быть длиннее 60 символов.';
     } elseif (admin_login_in_use($login)) {
         $errors[] = 'Администратор с таким логином уже существует.';
     }
 
     if ($displayName === '') {
         $errors[] = 'Укажите отображаемое имя администратора.';
+    } elseif (mb_strlen($displayName, 'UTF-8') > 120) {
+        $errors[] = 'Имя администратора не должно быть длиннее 120 символов.';
     }
 
-    if (strlen($password) < 8) {
-        $errors[] = 'Пароль администратора должен быть не короче 8 символов.';
+    if (strlen($password) < 12) {
+        $errors[] = 'Пароль администратора должен быть не короче 12 символов.';
+    } elseif (strlen($password) > 128) {
+        $errors[] = 'Пароль администратора не должен быть длиннее 128 символов.';
     }
 
     if ($password !== $passwordConfirm) {
         $errors[] = 'Подтверждение пароля не совпадает.';
+    }
+
+    if (!isset(admin_role_definitions()[$role])) {
+        $errors[] = 'Выберите допустимую роль администратора.';
+    }
+
+    $avatarPath = trim((string) ($input['avatar_path'] ?? ''));
+
+    if ($avatarPath !== '') {
+        $avatarError = admin_movie_image_reference_error($avatarPath);
+
+        if ($avatarError !== null) {
+            $errors[] = $avatarError;
+        }
     }
 
     return $errors;
@@ -399,10 +612,11 @@ function create_admin_account(array $input): array
     $login = admin_normalize_login((string) ($input['login'] ?? ''));
     $displayName = trim((string) ($input['display_name'] ?? ''));
     $password = (string) ($input['password'] ?? '');
+    $role = admin_normalize_role((string) ($input['role'] ?? 'auditor'));
     $avatarPath = trim((string) ($input['avatar_path'] ?? ''));
 
     if ($avatarPath === '') {
-        $avatarPath = 'img/people/image_2025-11-10_00-02-43.png';
+        $avatarPath = akino_default_avatar_path();
     }
 
     $statement = db()->prepare(
@@ -411,6 +625,7 @@ function create_admin_account(array $input): array
             password_hash,
             display_name,
             avatar_path,
+            role,
             created_at,
             updated_at
         ) VALUES (
@@ -418,6 +633,7 @@ function create_admin_account(array $input): array
             :password_hash,
             :display_name,
             :avatar_path,
+            :role,
             NOW(),
             NOW()
         )'
@@ -427,9 +643,64 @@ function create_admin_account(array $input): array
         'password_hash' => password_hash($password, PASSWORD_DEFAULT),
         'display_name' => $displayName,
         'avatar_path' => $avatarPath,
+        'role' => $role,
     ]);
 
-    return find_admin_account_by_id((int) db()->lastInsertId()) ?? [];
+    $account = find_admin_account_by_id((int) db()->lastInsertId()) ?? [];
+    security_event_log('admin_created', 'info', 'admin', (int) ($_SESSION['admin_account_id'] ?? 0), null, [
+        'created_admin_id' => (int) ($account['id'] ?? 0),
+        'created_login' => (string) ($account['login'] ?? ''),
+        'role' => $role,
+    ]);
+
+    return $account;
+}
+
+function admin_change_account_role(int $accountId, string $role, int $actorId): array
+{
+    $account = find_admin_account_by_id($accountId);
+    $role = strtolower(trim($role));
+
+    if (!$account) {
+        return ['Администратор для изменения роли не найден.'];
+    }
+
+    if (!isset(admin_role_definitions()[$role])) {
+        return ['Выбрана недопустимая роль администратора.'];
+    }
+
+    if ($accountId === $actorId && (string) ($account['role'] ?? '') === 'owner' && $role !== 'owner') {
+        return ['Нельзя понизить собственную роль администратора.'];
+    }
+
+    if ((string) ($account['role'] ?? '') === 'owner' && $role !== 'owner') {
+        $ownerCount = (int) db()->query(
+            'SELECT COUNT(*) FROM admin_accounts WHERE role = "owner"'
+        )->fetchColumn();
+
+        if ($ownerCount <= 1) {
+            return ['В системе должен остаться хотя бы один администратор с полным доступом.'];
+        }
+    }
+
+    db()->prepare(
+        'UPDATE admin_accounts
+         SET role = :role,
+             updated_at = NOW()
+         WHERE id = :id'
+    )->execute([
+        'id' => $accountId,
+        'role' => $role,
+    ]);
+
+    security_event_log('admin_role_changed', 'warning', 'admin', $actorId, null, [
+        'target_admin_id' => $accountId,
+        'target_login' => (string) ($account['login'] ?? ''),
+        'previous_role' => (string) ($account['role'] ?? ''),
+        'new_role' => $role,
+    ]);
+
+    return [];
 }
 
 function admin_change_password(int $accountId, string $currentPassword, string $newPassword, string $newPasswordConfirm): array
@@ -443,12 +714,17 @@ function admin_change_password(int $accountId, string $currentPassword, string $
         return $errors;
     }
 
-    if (!password_verify($currentPassword, (string) ($account['password_hash'] ?? ''))) {
+    if (
+        strlen($currentPassword) > 128
+        || !password_verify($currentPassword, (string) ($account['password_hash'] ?? ''))
+    ) {
         $errors[] = 'Текущий пароль указан неверно.';
     }
 
-    if (strlen($newPassword) < 8) {
-        $errors[] = 'Новый пароль должен быть не короче 8 символов.';
+    if (strlen($newPassword) < 12) {
+        $errors[] = 'Новый пароль должен быть не короче 12 символов.';
+    } elseif (strlen($newPassword) > 128) {
+        $errors[] = 'Новый пароль не должен быть длиннее 128 символов.';
     }
 
     if ($newPassword !== $newPasswordConfirm) {
@@ -465,6 +741,13 @@ function admin_change_password(int $accountId, string $currentPassword, string $
             'id' => $accountId,
             'password_hash' => password_hash($newPassword, PASSWORD_DEFAULT),
         ]);
+        security_event_log(
+            'admin_password_changed',
+            'warning',
+            'admin',
+            $accountId,
+            (string) ($account['login'] ?? '')
+        );
     }
 
     return $errors;
@@ -520,6 +803,18 @@ function admin_verify_csrf_token(?string $token): bool
     return $sessionToken !== '' && is_string($token) && hash_equals($sessionToken, $token);
 }
 
+function admin_canonical_genre(string $genre): string
+{
+    $genre = trim($genre);
+    $aliases = [
+        'хоррор' => 'Ужасы',
+        'приключение' => 'Приключения',
+    ];
+    $key = mb_strtolower($genre, 'UTF-8');
+
+    return $aliases[$key] ?? $genre;
+}
+
 function admin_genre_options(): array
 {
     $options = [
@@ -527,12 +822,13 @@ function admin_genre_options(): array
         'Комедия',
         'Драма',
         'Триллер',
-        'Хоррор',
         'Ужасы',
         'Фантастика',
         'Романтика',
         'Детектив',
-        'Приключение',
+        'Приключения',
+        'Семейный',
+        'Криминал',
         'Анимация',
         'Фэнтези',
         'Мистика',
@@ -540,11 +836,15 @@ function admin_genre_options(): array
     ];
 
     foreach (fetch_catalog_filter_options('movie')['genres'] as $genre) {
-        $options[] = $genre;
+        foreach (admin_split_genres((string) $genre) as $genrePart) {
+            $options[] = admin_canonical_genre($genrePart);
+        }
     }
 
     foreach (fetch_catalog_filter_options('series')['genres'] as $genre) {
-        $options[] = $genre;
+        foreach (admin_split_genres((string) $genre) as $genrePart) {
+            $options[] = admin_canonical_genre($genrePart);
+        }
     }
 
     $options = array_values(array_unique(array_filter(array_map('trim', $options))));
@@ -640,10 +940,7 @@ function admin_home_sections_from_movie(array $movie): array
 
 function admin_split_genres(string $value): array
 {
-    $parts = preg_split('/\s*(?:\/|,)\s*/u', $value) ?: [];
-    $parts = array_values(array_unique(array_filter(array_map('trim', $parts))));
-
-    return $parts;
+    return movie_split_genres($value);
 }
 
 function admin_duration_minutes_from_text(?string $value): int
@@ -707,7 +1004,7 @@ function admin_movie_form_from_movie(array $movie): array
         'mediaPath' => (string) ($movie['media_path'] ?? ''),
         'durationMinutes' => (string) admin_duration_minutes_from_text((string) ($movie['duration_text'] ?? '')),
         'description' => (string) ($movie['description'] ?? ''),
-        'genres' => admin_split_genres((string) ($movie['genre'] ?? '')),
+        'genres' => admin_normalize_genres_input(admin_split_genres((string) ($movie['genre'] ?? ''))),
         'country' => (string) ($movie['country'] ?? ''),
         'ageRating' => (string) ($movie['age_rating'] ?? '16+'),
         'homeSections' => admin_home_sections_from_movie($movie),
@@ -724,10 +1021,20 @@ function admin_normalize_genres_input($value): array
         return [];
     }
 
-    return array_values(array_unique(array_filter(array_map(
-        static fn ($genre): string => trim((string) $genre),
-        $value
-    ))));
+    $genres = [];
+
+    foreach ($value as $genreValue) {
+        foreach (movie_split_genres((string) $genreValue) as $genre) {
+            $genre = admin_canonical_genre($genre);
+            $key = mb_strtolower($genre, 'UTF-8');
+
+            if (!isset($genres[$key])) {
+                $genres[$key] = $genre;
+            }
+        }
+    }
+
+    return array_values($genres);
 }
 
 function admin_movie_form_from_input(array $input): array
@@ -753,6 +1060,89 @@ function admin_movie_form_from_input(array $input): array
     ];
 }
 
+function admin_movie_image_reference_error(string $reference): ?string
+{
+    if (strlen($reference) > 255 || preg_match('/[\x00-\x1F\x7F]/', $reference)) {
+        return 'Ссылка на изображение слишком длинная или содержит недопустимые символы.';
+    }
+
+    if (preg_match('~^https?://~i', $reference)) {
+        if (filter_var($reference, FILTER_VALIDATE_URL) === false) {
+            return 'Укажите корректный URL изображения.';
+        }
+
+        if (akino_is_production() && str_starts_with(strtolower($reference), 'http://')) {
+            return 'В рабочем окружении внешние изображения должны использовать HTTPS.';
+        }
+
+        return null;
+    }
+
+    $relativePath = ltrim(str_replace('\\', '/', $reference), '/');
+
+    if ($relativePath === '' || str_contains($relativePath, '../')) {
+        return 'Укажите корректный локальный путь к изображению.';
+    }
+
+    $publicRoot = realpath(__DIR__ . '/../public');
+    $imagePath = realpath(__DIR__ . '/../public/' . $relativePath);
+
+    if (
+        $publicRoot === false
+        || $imagePath === false
+        || !is_file($imagePath)
+        || !str_starts_with(strtolower($imagePath), strtolower($publicRoot . DIRECTORY_SEPARATOR))
+        || @getimagesize($imagePath) === false
+    ) {
+        return 'Локальный файл изображения не найден или имеет неподдерживаемый формат.';
+    }
+
+    return null;
+}
+
+function admin_media_reference_error(string $reference): ?string
+{
+    if ($reference === '') {
+        return null;
+    }
+
+    if (strlen($reference) > 255 || preg_match('/[\x00-\x1F\x7F]/', $reference)) {
+        return 'Ссылка на медиафайл слишком длинная или содержит недопустимые символы.';
+    }
+
+    if (preg_match('~^https?://~i', $reference)) {
+        if (filter_var($reference, FILTER_VALIDATE_URL) === false) {
+            return 'Укажите корректный URL медиафайла.';
+        }
+
+        if (akino_is_production() && str_starts_with(strtolower($reference), 'http://')) {
+            return 'В рабочем окружении внешние медиафайлы должны использовать HTTPS.';
+        }
+
+        return null;
+    }
+
+    $relativePath = ltrim(str_replace('\\', '/', $reference), '/');
+
+    if ($relativePath === '' || str_contains($relativePath, '../')) {
+        return 'Укажите корректный локальный путь к медиафайлу.';
+    }
+
+    $publicRoot = realpath(__DIR__ . '/../public');
+    $mediaPath = realpath(__DIR__ . '/../public/' . $relativePath);
+
+    if (
+        $publicRoot === false
+        || $mediaPath === false
+        || !is_file($mediaPath)
+        || !str_starts_with(strtolower($mediaPath), strtolower($publicRoot . DIRECTORY_SEPARATOR))
+    ) {
+        return 'Локальный медиафайл не найден.';
+    }
+
+    return null;
+}
+
 function admin_validate_movie_form(array $form, array $genreOptions): array
 {
     $errors = [];
@@ -764,8 +1154,14 @@ function admin_validate_movie_form(array $form, array $genreOptions): array
         ? (int) $form['durationMinutes']
         : 0;
 
+    if ((int) ($form['id'] ?? 0) > 0 && fetch_admin_movie_by_id((int) $form['id']) === null) {
+        $errors[] = 'Карточка для редактирования не найдена. Обновите список контента.';
+    }
+
     if ($form['title'] === '') {
         $errors[] = 'Укажите название контента.';
+    } elseif (mb_strlen($form['title'], 'UTF-8') > 160) {
+        $errors[] = 'Название контента не должно быть длиннее 160 символов.';
     }
 
     if (!in_array($form['contentType'], ['movie', 'series'], true)) {
@@ -774,6 +1170,12 @@ function admin_validate_movie_form(array $form, array $genreOptions): array
 
     if ($form['posterUrl'] === '') {
         $errors[] = 'Укажите URL постера или локальный путь к изображению.';
+    } else {
+        $imageError = admin_movie_image_reference_error($form['posterUrl']);
+
+        if ($imageError !== null) {
+            $errors[] = $imageError;
+        }
     }
 
     if ($form['releaseYear'] < 1900 || $form['releaseYear'] > $currentYear) {
@@ -784,12 +1186,32 @@ function admin_validate_movie_form(array $form, array $genreOptions): array
         $errors[] = 'Рейтинг должен быть в диапазоне от 0 до 10.';
     }
 
+    if (mb_strlen($form['director'], 'UTF-8') > 160) {
+        $errors[] = 'Имя режиссёра не должно быть длиннее 160 символов.';
+    }
+
+    $mediaError = admin_media_reference_error($form['mediaPath']);
+
+    if ($mediaError !== null) {
+        $errors[] = $mediaError;
+    }
+
     if ($duration < 0) {
         $errors[] = 'Длительность не может быть отрицательной.';
     }
 
     if ($form['description'] === '') {
         $errors[] = 'Добавьте описание контента.';
+    } elseif (mb_strlen($form['description'], 'UTF-8') > 10000) {
+        $errors[] = 'Описание контента не должно быть длиннее 10000 символов.';
+    }
+
+    if (mb_strlen($form['country'], 'UTF-8') > 120) {
+        $errors[] = 'Название страны не должно быть длиннее 120 символов.';
+    }
+
+    if (mb_strlen($form['ageRating'], 'UTF-8') > 20) {
+        $errors[] = 'Возрастной рейтинг не должен быть длиннее 20 символов.';
     }
 
     if (!$form['genres']) {
@@ -901,11 +1323,16 @@ function save_admin_movie(array $form, ?int $movieId = null): array
     }
 
     $existingMovie = $movieId !== null && $movieId > 0 ? fetch_admin_movie_by_id($movieId) : null;
+
+    if ($movieId !== null && $movieId > 0 && $existingMovie === null) {
+        throw new RuntimeException('Карточка для редактирования не найдена.');
+    }
+
     $slug = admin_unique_slug($form['title'], $existingMovie ? (int) $existingMovie['id'] : null);
     $durationMinutes = $form['durationMinutes'] !== '' ? max(0, (int) $form['durationMinutes']) : 0;
     $durationText = admin_duration_text_from_minutes($durationMinutes, $form['contentType']);
     $rating = round((float) $form['rating'], 1);
-    $genre = implode(' / ', $form['genres']);
+    $genre = movie_join_genres($form['genres']);
     $sectionOrders = [];
 
     foreach (admin_home_section_definitions() as $sectionKey => $_meta) {
@@ -1033,16 +1460,49 @@ function save_admin_movie(array $form, ?int $movieId = null): array
     return fetch_admin_movie_by_id((int) db()->lastInsertId()) ?? [];
 }
 
-function delete_admin_movie(int $movieId): void
+function delete_admin_movie(int $movieId): bool
 {
     ensure_admin_support();
 
     if (!admin_support_available() || $movieId <= 0) {
-        return;
+        return false;
     }
 
-    $statement = db()->prepare('DELETE FROM movies WHERE id = :id');
-    $statement->execute(['id' => $movieId]);
+    $pdo = db();
+    $startedTransaction = !$pdo->inTransaction();
+
+    if ($startedTransaction) {
+        $pdo->beginTransaction();
+    }
+
+    try {
+        $cleanupTables = [
+            'movie_favorites',
+            'watch_history',
+            'watch_progress',
+        ];
+
+        foreach ($cleanupTables as $table) {
+            $statement = $pdo->prepare(sprintf('DELETE FROM %s WHERE movie_id = :id', $table));
+            $statement->execute(['id' => $movieId]);
+        }
+
+        $statement = $pdo->prepare('DELETE FROM movies WHERE id = :id');
+        $statement->execute(['id' => $movieId]);
+        $deleted = $statement->rowCount() > 0;
+
+        if ($startedTransaction) {
+            $pdo->commit();
+        }
+
+        return $deleted;
+    } catch (Throwable $exception) {
+        if ($startedTransaction && $pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+
+        throw $exception;
+    }
 }
 
 function fetch_admin_content_list(int $limit = 24): array
@@ -1184,6 +1644,7 @@ function fetch_admin_episode_list(int $limit = 50): array
             s.season_number,
             s.title AS season_title,
             m.title AS series_title,
+            m.content_type AS series_content_type,
             m.card_path AS series_card_path
          FROM episodes e
          INNER JOIN seasons s ON s.id = e.season_id
@@ -1197,36 +1658,105 @@ function fetch_admin_episode_list(int $limit = 50): array
     return $statement->fetchAll();
 }
 
+function admin_episode_number_in_use(
+    int $seriesId,
+    int $seasonNumber,
+    int $episodeNumber,
+    ?int $ignoreEpisodeId = null
+): bool {
+    if ($seriesId <= 0 || $seasonNumber <= 0 || $episodeNumber <= 0) {
+        return false;
+    }
+
+    $sql = 'SELECT e.id
+            FROM episodes e
+            INNER JOIN seasons s ON s.id = e.season_id
+            WHERE s.series_id = :series_id
+              AND s.season_number = :season_number
+              AND e.episode_number = :episode_number';
+
+    if ($ignoreEpisodeId !== null && $ignoreEpisodeId > 0) {
+        $sql .= ' AND e.id <> :ignore_episode_id';
+    }
+
+    $sql .= ' LIMIT 1';
+    $statement = db()->prepare($sql);
+    $statement->bindValue(':series_id', $seriesId, PDO::PARAM_INT);
+    $statement->bindValue(':season_number', $seasonNumber, PDO::PARAM_INT);
+    $statement->bindValue(':episode_number', $episodeNumber, PDO::PARAM_INT);
+
+    if ($ignoreEpisodeId !== null && $ignoreEpisodeId > 0) {
+        $statement->bindValue(':ignore_episode_id', $ignoreEpisodeId, PDO::PARAM_INT);
+    }
+
+    $statement->execute();
+
+    return (bool) $statement->fetchColumn();
+}
+
 function admin_validate_episode_form(array $form): array
 {
     $errors = [];
+    $episodeId = (int) ($form['id'] ?? 0);
     $seriesId = (int) ($form['seriesId'] ?? 0);
     $series = $seriesId > 0 ? find_movie_by_id($seriesId) : null;
+    $seasonNumber = (int) ($form['seasonNumber'] ?? 0);
+    $episodeNumber = (int) ($form['episodeNumber'] ?? 0);
     $duration = trim((string) ($form['durationMinutes'] ?? ''));
     $sortOrder = trim((string) ($form['sortOrder'] ?? ''));
+
+    if ($episodeId > 0 && admin_fetch_episode_by_id($episodeId) === null) {
+        $errors[] = 'Серия для редактирования не найдена. Обновите библиотеку серий.';
+    }
 
     if (!$series || ($series['content_type'] ?? '') !== 'series') {
         $errors[] = 'Выберите сериал для серии.';
     }
 
-    if ((int) ($form['seasonNumber'] ?? 0) < 1) {
+    if ($seasonNumber < 1) {
         $errors[] = 'Номер сезона должен быть больше нуля.';
     }
 
     if (trim((string) ($form['seasonTitle'] ?? '')) === '') {
         $errors[] = 'Укажите название сезона.';
+    } elseif (mb_strlen((string) $form['seasonTitle'], 'UTF-8') > 160) {
+        $errors[] = 'Название сезона не должно быть длиннее 160 символов.';
     }
 
-    if ((int) ($form['episodeNumber'] ?? 0) < 1) {
+    if ($episodeNumber < 1) {
         $errors[] = 'Номер серии должен быть больше нуля.';
     }
 
     if (trim((string) ($form['title'] ?? '')) === '') {
         $errors[] = 'Укажите название серии.';
+    } elseif (mb_strlen((string) $form['title'], 'UTF-8') > 160) {
+        $errors[] = 'Название серии не должно быть длиннее 160 символов.';
     }
 
     if (trim((string) ($form['videoPath'] ?? '')) === '') {
         $errors[] = 'Укажите URL файла или потока серии.';
+    } else {
+        $videoError = admin_media_reference_error((string) $form['videoPath']);
+
+        if ($videoError !== null) {
+            $errors[] = $videoError;
+        }
+    }
+
+    if (trim((string) ($form['previewPath'] ?? '')) !== '') {
+        $previewError = admin_movie_image_reference_error((string) $form['previewPath']);
+
+        if ($previewError !== null) {
+            $errors[] = $previewError;
+        }
+    }
+
+    if (mb_strlen((string) ($form['seasonDescription'] ?? ''), 'UTF-8') > 10000) {
+        $errors[] = 'Описание сезона не должно быть длиннее 10000 символов.';
+    }
+
+    if (mb_strlen((string) ($form['description'] ?? ''), 'UTF-8') > 10000) {
+        $errors[] = 'Описание серии не должно быть длиннее 10000 символов.';
     }
 
     if ($duration !== '' && (!is_numeric($duration) || (int) $duration < 0)) {
@@ -1237,6 +1767,16 @@ function admin_validate_episode_form(array $form): array
         $errors[] = 'Порядок сортировки должен быть положительным числом.';
     }
 
+    if (
+        $series
+        && ($series['content_type'] ?? '') === 'series'
+        && $seasonNumber > 0
+        && $episodeNumber > 0
+        && admin_episode_number_in_use($seriesId, $seasonNumber, $episodeNumber, $episodeId ?: null)
+    ) {
+        $errors[] = 'В этом сезоне уже существует серия с таким номером.';
+    }
+
     return $errors;
 }
 
@@ -1245,18 +1785,32 @@ function admin_save_episode(array $form, ?int $episodeId = null): array
     ensure_admin_support();
 
     if (!admin_support_available()) {
-        throw new RuntimeException('Episode management is unavailable without an initialized database.');
+        throw new RuntimeException('Управление сериями недоступно без подключённой базы данных.');
     }
 
     $seriesId = (int) $form['seriesId'];
     $series = find_movie_by_id($seriesId);
 
     if (!$series || ($series['content_type'] ?? '') !== 'series') {
-        throw new RuntimeException('Series not found.');
+        throw new RuntimeException('Сериал для серии не найден.');
     }
 
     $seasonNumber = max(1, (int) $form['seasonNumber']);
     $episodeNumber = max(1, (int) $form['episodeNumber']);
+    $existingEpisode = null;
+
+    if ($episodeId !== null && $episodeId > 0) {
+        $existingEpisode = admin_fetch_episode_by_id($episodeId);
+
+        if (!$existingEpisode) {
+            throw new RuntimeException('Серия для редактирования не найдена.');
+        }
+    }
+
+    if (admin_episode_number_in_use($seriesId, $seasonNumber, $episodeNumber, $episodeId)) {
+        throw new RuntimeException('В этом сезоне уже существует серия с таким номером.');
+    }
+
     $durationMinutes = trim((string) ($form['durationMinutes'] ?? ''));
     $durationSeconds = $durationMinutes !== '' ? max(0, (int) $durationMinutes) * 60 : 0;
     $previewPath = trim((string) ($form['previewPath'] ?? ''));
@@ -1334,12 +1888,6 @@ function admin_save_episode(array $form, ?int $episodeId = null): array
         }
 
         if ($episodeId !== null && $episodeId > 0) {
-            $existingEpisode = admin_fetch_episode_by_id($episodeId);
-
-            if (!$existingEpisode) {
-                throw new RuntimeException('Episode not found.');
-            }
-
             $updateEpisode = $db->prepare(
                 'UPDATE episodes
                  SET season_id = :season_id,
@@ -1480,6 +2028,19 @@ function admin_log_user_action(?int $userId, string $actionType, string $summary
         'action_summary' => $summary,
         'details_json' => $detailsJson,
     ]);
+
+    security_event_log(
+        'admin_action',
+        'info',
+        'admin',
+        $adminAccount ? (int) ($adminAccount['id'] ?? 0) : null,
+        $adminAccount ? (string) ($adminAccount['login'] ?? '') : null,
+        [
+            'action_type' => $actionType,
+            'summary' => $summary,
+            'user_id' => $userId,
+        ]
+    );
 }
 
 function fetch_admin_user_action_logs(int $userId, int $limit = 12): array
@@ -1531,7 +2092,7 @@ function fetch_admin_user_action_logs(int $userId, int $limit = 12): array
 
 function admin_hydrate_user_directory_row(array $row): array
 {
-    $row['avatar_display'] = (string) ($row['avatar_path'] ?: 'img/people/image_2025-11-10_00-02-43.png');
+    $row['avatar_display'] = akino_avatar_display_path($row['avatar_path'] ?? null);
     $row['name_display'] = (string) ($row['name'] ?: 'Пользователь AKINO');
     $row['phone_display'] = format_phone((string) ($row['phone'] ?? ''));
     $row['email_display'] = (string) ($row['email'] ?: 'Не указан');
@@ -1620,6 +2181,8 @@ function admin_validate_user_profile_form(array $form): array
 
     if ($name === '') {
         $errors[] = 'Укажите имя пользователя.';
+    } elseif (mb_strlen($name, 'UTF-8') > 120) {
+        $errors[] = 'Имя пользователя не должно быть длиннее 120 символов.';
     }
 
     if (!is_string($phone) || $phone === '') {
@@ -1632,7 +2195,9 @@ function admin_validate_user_profile_form(array $form): array
         }
     }
 
-    if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+    if (mb_strlen($email, 'UTF-8') > 190) {
+        $errors[] = 'E-mail не должен быть длиннее 190 символов.';
+    } elseif ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
         $errors[] = 'Введите корректный e-mail.';
     } elseif ($email !== '' && admin_email_in_use($email, $userId)) {
         $errors[] = 'Этот e-mail уже используется другим пользователем.';
@@ -1640,6 +2205,20 @@ function admin_validate_user_profile_form(array $form): array
 
     if ($birthDateInput !== '' && $birthDate === null) {
         $errors[] = 'Дата рождения должна быть в формате ДД.ММ.ГГГГ или YYYY-MM-DD.';
+    }
+
+    if (mb_strlen((string) ($form['gender'] ?? ''), 'UTF-8') > 40) {
+        $errors[] = 'Поле пола не должно быть длиннее 40 символов.';
+    }
+
+    $avatarPath = trim((string) ($form['avatarPath'] ?? ''));
+
+    if ($avatarPath !== '') {
+        $avatarError = admin_movie_image_reference_error($avatarPath);
+
+        if ($avatarError !== null) {
+            $errors[] = $avatarError;
+        }
     }
 
     return $errors;
@@ -1657,7 +2236,7 @@ function admin_update_user_profile(array $form): ?array
     $avatarPath = trim((string) ($form['avatarPath'] ?? ''));
 
     if ($avatarPath === '') {
-        $avatarPath = 'img/people/image_2025-11-10_00-02-43.png';
+        $avatarPath = akino_default_avatar_path();
     }
 
     db()->prepare(

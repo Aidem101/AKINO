@@ -9,7 +9,7 @@
 
     <div class="Form-login">
       <div class="Form-Title">
-        <p>Войдите или создайте аккаунт в <img src="logo.svg" alt="AKINO" style="height: 1em; vertical-align: middle;"></p>
+        <p>Войдите или создайте аккаунт в <img src="logo.svg" alt="AKINO" class="auth-brand-logo"></p>
       </div>
 
       <div class="auth-feedback" id="authFeedback" hidden></div>
@@ -28,7 +28,7 @@
         </div>
       </div>
 
-      <div id="step-2" style="display: none;">
+      <div id="step-2" hidden>
         <div class="code-message">
           Введите код из сообщения на <span id="displayPhone">+7 (999) 999-99-99</span>
         </div>
@@ -44,7 +44,7 @@
           <input type="submit" value="Продолжить" class="login-btn">
         </form>
 
-        <div class="polz-sogl" style="margin-top: 20px;">
+        <div class="polz-sogl auth-resend-note">
           <a href="Home.php?auth=required" class="resend-link">Нажмите, чтобы получить новый код</a>, если не пришло сообщение
         </div>
       </div>

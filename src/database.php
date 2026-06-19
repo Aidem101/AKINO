@@ -59,16 +59,34 @@ function db(): PDO
 
     foreach (array_values(array_unique($dsnList)) as $dsn) {
         try {
+            $options = [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+                PDO::ATTR_TIMEOUT => max(1, (int) ($config['timeout'] ?? 1)),
+            ];
+            $sslCa = trim((string) ($config['ssl_ca'] ?? ''));
+
+            if ($sslCa !== '') {
+                if (!is_file($sslCa) || !is_readable($sslCa)) {
+                    throw new RuntimeException('Configured database CA file is not readable.');
+                }
+
+                if (defined('PDO::MYSQL_ATTR_SSL_CA')) {
+                    $options[constant('PDO::MYSQL_ATTR_SSL_CA')] = $sslCa;
+                }
+
+                if (defined('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT')) {
+                    $options[constant('PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT')] =
+                        (bool) ($config['ssl_verify_server_cert'] ?? true);
+                }
+            }
+
             $pdo = new PDO(
                 $dsn,
                 $config['username'],
                 $config['password'],
-                [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false,
-                    PDO::ATTR_TIMEOUT => max(1, (int) ($config['timeout'] ?? 1)),
-                ]
+                $options
             );
 
             return $pdo;

@@ -12,13 +12,17 @@ if ($movie === null) {
 }
 
 $relatedMovies = $movie ? fetch_related_movies((int) $movie['id'], (string) $movie['content_type'], 6) : [];
+$movieGenres = $movie ? movie_split_genres((string) ($movie['genre'] ?? '')) : [];
+$genreCatalogPath = $movie && ($movie['content_type'] ?? 'movie') === 'series'
+    ? 'Series_Page.php'
+    : 'Films_Catalog.php';
 $watchHref = $movie !== null && $currentUserId !== null ? 'Watch.php?id=' . (int) $movie['id'] : 'Home.php?auth=required';
 $isFavorite = $movie !== null && $currentUserId !== null
     ? is_movie_favorite($currentUserId, (int) $movie['id'])
     : false;
 
 $pageTitle = $movie ? $movie['title'] . ' - AKINO' : 'Карточка не найдена - AKINO';
-$bodyClass = '';
+$bodyClass = 'film-detail-page';
 $activeNav = $movie && ($movie['content_type'] ?? 'movie') === 'series' ? 'series' : 'films';
 
 require __DIR__ . '/includes/page-top.php';
@@ -47,7 +51,16 @@ require __DIR__ . '/includes/page-top.php';
       <div class="hero-meta">
         <span class="hero-rating"><?= number_format((float) $movie['rating'], 1, '.', '') ?></span>
         <span class="hero-year"><?= (int) $movie['release_year'] ?></span>
-        <span class="hero-genre"><?= akino_escape((string) $movie['genre']) ?></span>
+        <?php if ($movieGenres): ?>
+          <span class="hero-genres" aria-label="Жанры">
+            <?php foreach ($movieGenres as $genre): ?>
+              <a
+                class="hero-genre"
+                href="<?= akino_escape($genreCatalogPath . '?' . http_build_query(['genre' => $genre])) ?>"
+              ><?= akino_escape($genre) ?></a>
+            <?php endforeach; ?>
+          </span>
+        <?php endif; ?>
       </div>
 
       <div class="hero-meta">
@@ -105,11 +118,7 @@ require __DIR__ . '/includes/page-top.php';
     <section class="film-mini">
       <h1>Смотрите также</h1>
 
-      <div class="mini-track">
-        <?php foreach ($relatedMovies as $relatedMovie): ?>
-          <?php render_mini_card($relatedMovie); ?>
-        <?php endforeach; ?>
-      </div>
+      <?php render_mini_track($relatedMovies); ?>
     </section>
   <?php endif; ?>
 <?php endif; ?>

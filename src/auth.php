@@ -6,13 +6,98 @@ const AKINO_AUTH_CODE_REQUEST_LIMIT = 3;
 const AKINO_AUTH_CODE_REQUEST_WINDOW_MINUTES = 10;
 const AKINO_AUTH_CODE_ATTEMPT_LIMIT = 5;
 const AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS = 600;
+const AKINO_AUTH_IP_REQUEST_LIMIT = 10;
+const AKINO_AUTH_IP_VERIFY_FAILURE_LIMIT = 20;
 
 final class AuthCodeException extends RuntimeException
 {
 }
 
+function auth_request_rate_identity(): string
+{
+    return request_client_ip();
+}
+
+function assert_auth_request_rate_allowed(): void
+{
+    if (security_rate_limit_exceeded(
+        'auth_code_request',
+        auth_request_rate_identity(),
+        AKINO_AUTH_IP_REQUEST_LIMIT,
+        AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS
+    )) {
+        security_event_log('auth_rate_blocked', 'warning', 'anonymous', null, null, [
+            'flow' => 'request_code',
+        ]);
+
+        throw new AuthCodeException('Слишком много запросов кода. Попробуйте позже.');
+    }
+}
+
+function register_auth_request(): void
+{
+    security_rate_limit_record_failure(
+        'auth_code_request',
+        auth_request_rate_identity(),
+        AKINO_AUTH_IP_REQUEST_LIMIT,
+        AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS,
+        AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS
+    );
+}
+
+function assert_auth_verify_rate_allowed(): void
+{
+    if (security_rate_limit_exceeded(
+        'auth_code_verify',
+        auth_request_rate_identity(),
+        AKINO_AUTH_IP_VERIFY_FAILURE_LIMIT,
+        AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS
+    )) {
+        security_event_log('auth_rate_blocked', 'warning', 'anonymous', null, null, [
+            'flow' => 'verify_code',
+        ]);
+
+        throw new AuthCodeException('Слишком много неверных попыток. Запросите новый код позже.');
+    }
+}
+
+function register_auth_verify_failure(): void
+{
+    security_rate_limit_record_failure(
+        'auth_code_verify',
+        auth_request_rate_identity(),
+        AKINO_AUTH_IP_VERIFY_FAILURE_LIMIT,
+        AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS,
+        AKINO_AUTH_CODE_ATTEMPT_WINDOW_SECONDS
+    );
+}
+
+function auth_code_attempt_counter_available(): bool
+{
+    static $available;
+
+    if ($available === null) {
+        try {
+            if (akino_runtime_bootstrap_enabled() && !akino_column_exists('auth_codes', 'attempt_count')) {
+                db()->exec(
+                    'ALTER TABLE auth_codes
+                     ADD COLUMN attempt_count SMALLINT UNSIGNED NOT NULL DEFAULT 0 AFTER expires_at'
+                );
+            }
+
+            $available = akino_column_exists('auth_codes', 'attempt_count');
+        } catch (Throwable) {
+            $available = false;
+        }
+    }
+
+    return $available;
+}
+
 function assert_auth_code_request_allowed(string $phone): void
 {
+    assert_auth_request_rate_allowed();
+
     $statement = db()->prepare(
         'SELECT COUNT(*)
          FROM auth_codes
@@ -22,6 +107,15 @@ function assert_auth_code_request_allowed(string $phone): void
     $statement->execute(['phone' => $phone]);
 
     if ((int) $statement->fetchColumn() >= AKINO_AUTH_CODE_REQUEST_LIMIT) {
+        security_event_log(
+            'auth_rate_blocked',
+            'warning',
+            'user',
+            null,
+            security_phone_label($phone),
+            ['flow' => 'phone_request_limit']
+        );
+
         throw new AuthCodeException('Слишком много запросов кода. Попробуйте позже.');
     }
 }
@@ -117,6 +211,15 @@ function create_auth_code_request(string $phone, string $intent): array
 
         $requestId = (int) $db->lastInsertId();
         $db->commit();
+        register_auth_request();
+        security_event_log(
+            'auth_code_requested',
+            'info',
+            'user',
+            null,
+            security_phone_label($phone),
+            ['intent' => $intent]
+        );
     } catch (Throwable $exception) {
         if ($db->inTransaction()) {
             $db->rollBack();
@@ -135,9 +238,9 @@ function create_auth_code_request(string $phone, string $intent): array
 function verify_auth_code_request(int $requestId, string $code): array
 {
     assert_auth_code_attempt_allowed($requestId);
+    assert_auth_verify_rate_allowed();
 
     $db = db();
-    $badCode = false;
     $db->beginTransaction();
 
     try {
@@ -159,8 +262,50 @@ function verify_auth_code_request(int $requestId, string $code): array
             throw new AuthCodeException('Срок действия кода истёк. Запросите новый код.');
         }
 
+        if (
+            auth_code_attempt_counter_available()
+            && (int) ($request['attempt_count'] ?? 0) >= AKINO_AUTH_CODE_ATTEMPT_LIMIT
+        ) {
+            throw new AuthCodeException('Слишком много неверных попыток. Запросите новый код.');
+        }
+
         if (!password_verify($code, $request['code_hash'])) {
-            $badCode = true;
+            if (auth_code_attempt_counter_available()) {
+                $failedAttempt = $db->prepare(
+                    'UPDATE auth_codes
+                     SET used_at = CASE
+                             WHEN attempt_count + 1 >= :attempt_limit THEN NOW()
+                             ELSE used_at
+                         END,
+                         attempt_count = attempt_count + 1
+                     WHERE id = :id AND used_at IS NULL'
+                );
+                $failedAttempt->execute([
+                    'attempt_limit' => AKINO_AUTH_CODE_ATTEMPT_LIMIT,
+                    'id' => $requestId,
+                ]);
+            } else {
+                $failedAttempt = $db->prepare(
+                    'UPDATE auth_codes SET used_at = NOW() WHERE id = :id AND used_at IS NULL'
+                );
+                $failedAttempt->execute(['id' => $requestId]);
+            }
+
+            $db->commit();
+            register_auth_code_failed_attempt($requestId);
+            register_auth_verify_failure();
+            security_event_log(
+                'auth_code_failed',
+                'warning',
+                'user',
+                null,
+                security_phone_label((string) ($request['phone'] ?? '')),
+                [
+                    'request_id' => $requestId,
+                    'attempt_count' => (int) ($request['attempt_count'] ?? 0) + 1,
+                ]
+            );
+
             throw new AuthCodeException('Неверный код подтверждения.');
         }
 
@@ -175,15 +320,20 @@ function verify_auth_code_request(int $requestId, string $code): array
 
         $db->commit();
         clear_auth_code_failed_attempts($requestId);
+        security_rate_limit_clear('auth_code_verify', auth_request_rate_identity());
+        security_event_log(
+            'auth_code_verified',
+            'info',
+            'user',
+            null,
+            security_phone_label((string) ($request['phone'] ?? '')),
+            ['intent' => (string) ($request['intent'] ?? 'login')]
+        );
 
         return $request;
     } catch (Throwable $exception) {
         if ($db->inTransaction()) {
             $db->rollBack();
-        }
-
-        if ($badCode) {
-            register_auth_code_failed_attempt($requestId);
         }
 
         throw $exception;
@@ -193,6 +343,14 @@ function verify_auth_code_request(int $requestId, string $code): array
 function login_user(array $user): void
 {
     if (user_is_blocked($user)) {
+        security_event_log(
+            'user_login_blocked',
+            'warning',
+            'user',
+            (int) ($user['id'] ?? 0),
+            security_phone_label((string) ($user['phone'] ?? ''))
+        );
+
         throw new RuntimeException('Аккаунт временно заблокирован. Обратитесь в поддержку AKINO.');
     }
 
@@ -200,11 +358,20 @@ function login_user(array $user): void
         session_regenerate_id(true);
     }
 
+    akino_rotate_csrf_token();
     $_SESSION['user_id'] = (int) $user['id'];
+    $_SESSION['auth_verified_at'] = time();
     akino_set_auth_cookie((int) $user['id']);
 
     $statement = db()->prepare('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = :id');
     $statement->execute(['id' => (int) $user['id']]);
+    security_event_log(
+        'user_login_success',
+        'info',
+        'user',
+        (int) $user['id'],
+        security_phone_label((string) ($user['phone'] ?? ''))
+    );
 }
 
 function logout_user(): void

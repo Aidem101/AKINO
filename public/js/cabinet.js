@@ -15,6 +15,16 @@
   const subscribeButton = $('.subscribe-btn');
   const mobileAvatar = $('.mobile-avatar');
   const logoutLink = $('.nav-item.logout');
+  const avatarInput = $('#profileAvatar');
+  const avatarUploadButton = $('.avatar-upload-btn');
+  const avatarUploadHint = $('#avatarUploadHint');
+  const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || '';
+  const defaultAvatar = 'img/avatars/default-neutral.svg';
+  const legacyDefaultAvatar = 'img/people/image_2025-11-10_00-02-43.png';
+
+  function normalizeAvatar(avatar) {
+    return avatar === legacyDefaultAvatar || !avatar ? defaultAvatar : avatar;
+  }
 
   async function fetchJson(url, options = {}) {
     const response = await fetch(url, {
@@ -42,8 +52,20 @@
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-Token': csrfToken,
       },
       body: new URLSearchParams(data),
+    });
+  }
+
+  function postMultipart(url, data) {
+    return fetchJson(url, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRF-Token': csrfToken,
+      },
+      body: data,
     });
   }
 
@@ -68,6 +90,23 @@
     }
 
     window.AkinoToast.show(message, type, duration);
+  }
+
+  function setAvatarUploadState(isUploading, message = '', type = '') {
+    if (avatarInput) {
+      avatarInput.disabled = isUploading;
+    }
+
+    if (avatarUploadButton) {
+      avatarUploadButton.classList.toggle('is-uploading', isUploading);
+      avatarUploadButton.textContent = isUploading ? 'Загружаем...' : 'Загрузить аватарку';
+    }
+
+    if (avatarUploadHint) {
+      avatarUploadHint.textContent = message || 'JPG, PNG или WEBP до 2 МБ';
+      avatarUploadHint.classList.toggle('is-error', type === 'error');
+      avatarUploadHint.classList.toggle('is-success', type === 'success');
+    }
   }
 
   function openTab(tabId, syncUrl = true) {
@@ -121,11 +160,11 @@
 
     desktopProfile.href = 'Cabinet.php';
     profileLabel.textContent = user.name;
-    profileImage.src = user.avatar;
+    profileImage.src = normalizeAvatar(user.avatar);
     subscribeButton.textContent = user.subscription.active ? 'Продлить' : 'Подписка';
 
     if (mobileAvatarImage) {
-      mobileAvatarImage.src = user.avatar;
+      mobileAvatarImage.src = normalizeAvatar(user.avatar);
     }
   }
 
@@ -139,13 +178,21 @@
     box.innerHTML = `
       <p>${user.subscription.active ? `Ваша текущая подписка: <strong>${escapeHtml(user.subscription.name)}</strong>` : 'Подписка AKINO пока не активна.'}</p>
       <p>${user.subscription.active ? `Действует до: ${escapeHtml(user.subscription.endsAtDisplay)}` : `Стоимость: ${escapeHtml(user.subscription.priceDisplay)} за ${escapeHtml(String(user.subscription.durationDays))} дней.`}</p>
-      <button class="edit-profile-btn" id="renewSubscriptionBtn" style="margin-top: 20px;">${user.subscription.active ? 'Продлить подписку' : 'Подключить подписку'}</button>
+      <div class="subscription-action-row">
+        <button class="edit-profile-btn" id="renewSubscriptionBtn">${user.subscription.active ? 'Продлить подписку' : 'Подключить подписку'}</button>
+        ${user.subscription.active ? '<button class="cancel-subscription-btn" id="cancelSubscriptionBtn">Отменить подписку</button>' : ''}
+      </div>
     `;
 
     const renewButton = $('#renewSubscriptionBtn');
+    const cancelSubscriptionButton = $('#cancelSubscriptionBtn');
 
     if (renewButton) {
       renewButton.addEventListener('click', renewSubscription);
+    }
+
+    if (cancelSubscriptionButton) {
+      cancelSubscriptionButton.addEventListener('click', cancelSubscription);
     }
   }
 
@@ -315,7 +362,7 @@
     const payment = $('.payment-link');
 
     if (avatar) {
-      avatar.src = user.avatar;
+      avatar.src = normalizeAvatar(user.avatar);
     }
 
     if (userName) {
@@ -372,6 +419,42 @@
     }
   }
 
+  async function uploadAvatar(file) {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    const maxBytes = 2 * 1024 * 1024;
+
+    if (!allowedTypes.includes(file.type)) {
+      setAvatarUploadState(false, 'Поддерживаются JPG, PNG и WEBP.', 'error');
+      showNotice('Поддерживаются JPG, PNG и WEBP.', 'error', 2800);
+      return;
+    }
+
+    if (file.size > maxBytes) {
+      setAvatarUploadState(false, 'Размер файла должен быть до 2 МБ.', 'error');
+      showNotice('Размер файла должен быть до 2 МБ.', 'error', 2800);
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('action', 'avatar');
+    formData.append('avatar', file);
+    setAvatarUploadState(true, 'Загружаем аватарку...');
+
+    try {
+      const payload = await postMultipart('api/profile.php', formData);
+      renderUser(payload.user);
+      setAvatarUploadState(false, 'Аватарка обновлена.', 'success');
+      showNotice(payload.message, 'success');
+    } catch (error) {
+      setAvatarUploadState(false, error.message, 'error');
+      showNotice(error.message, 'error', 3200);
+    } finally {
+      if (avatarInput) {
+        avatarInput.value = '';
+      }
+    }
+  }
+
   async function renewSubscription() {
     const renewButton = $('#renewSubscriptionBtn');
 
@@ -395,6 +478,37 @@
       if (renewButton) {
         renewButton.removeAttribute('disabled');
       }
+    }
+  }
+
+  async function cancelSubscription() {
+    const confirmed = window.confirm('Отменить подписку? Доступ к просмотру будет прекращён сразу.');
+
+    if (!confirmed) {
+      return;
+    }
+
+    const cancelSubscriptionButton = $('#cancelSubscriptionBtn');
+    const renewButton = $('#renewSubscriptionBtn');
+
+    cancelSubscriptionButton?.setAttribute('disabled', 'disabled');
+    renewButton?.setAttribute('disabled', 'disabled');
+
+    try {
+      const payload = await postForm('api/subscription-cancel.php', {});
+      renderUser(payload.user);
+      openTab('tab-subscription');
+      showNotice(payload.message, 'success', 3200);
+    } catch (error) {
+      if (error.status === 401) {
+        window.location.href = 'Home.php?auth=required';
+        return;
+      }
+
+      showNotice(error.message, 'error', 3600);
+    } finally {
+      cancelSubscriptionButton?.removeAttribute('disabled');
+      renewButton?.removeAttribute('disabled');
     }
   }
 
@@ -475,7 +589,19 @@
     if (logoutLink) {
       logoutLink.addEventListener('click', (event) => {
         event.preventDefault();
-        window.location.href = 'logout.php';
+        window.location.href = logoutLink.href;
+      });
+    }
+
+    if (avatarInput) {
+      avatarInput.addEventListener('change', () => {
+        const file = avatarInput.files && avatarInput.files[0];
+
+        if (!file) {
+          return;
+        }
+
+        uploadAvatar(file);
       });
     }
 

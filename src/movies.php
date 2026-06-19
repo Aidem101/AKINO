@@ -2,6 +2,62 @@
 
 declare(strict_types=1);
 
+function movie_split_genres(string $value): array
+{
+    $parts = preg_split('/\s*(?:\/|,|;|\|)\s*/u', $value) ?: [];
+    $genres = [];
+
+    foreach ($parts as $part) {
+        $genre = trim((string) preg_replace('/\s+/u', ' ', trim($part)));
+
+        if ($genre === '') {
+            continue;
+        }
+
+        $key = mb_strtolower($genre, 'UTF-8');
+
+        if (!isset($genres[$key])) {
+            $genres[$key] = $genre;
+        }
+    }
+
+    return array_values($genres);
+}
+
+function movie_join_genres(array $genres): string
+{
+    $normalized = [];
+
+    foreach ($genres as $genre) {
+        foreach (movie_split_genres((string) $genre) as $part) {
+            $key = mb_strtolower($part, 'UTF-8');
+
+            if (!isset($normalized[$key])) {
+                $normalized[$key] = $part;
+            }
+        }
+    }
+
+    return implode(' / ', array_values($normalized));
+}
+
+function movie_has_genre(array $movie, string $genre): bool
+{
+    $needle = mb_strtolower(trim($genre), 'UTF-8');
+
+    if ($needle === '') {
+        return false;
+    }
+
+    foreach (movie_split_genres((string) ($movie['genre'] ?? '')) as $movieGenre) {
+        if (mb_strtolower($movieGenre, 'UTF-8') === $needle) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function ensure_movie_library(): void
 {
     static $bootstrapped = false;
@@ -223,7 +279,7 @@ function movie_seed_rows(): array
 {
     return [
         [
-            'slug' => 'hobbit-battle-of-the-five-armies',
+            'slug' => 'hobbit-bitva-pyati-voinstv',
             'title' => 'Хоббит: Битва пяти воинств',
             'content_type' => 'movie',
             'release_year' => 2014,
@@ -234,8 +290,8 @@ function movie_seed_rows(): array
             'age_rating' => '16+',
             'description' => 'Бильбо и отряд гномов возвращаются к Одинокой горе, чтобы отстоять Эребор и пережить битву, в которой решится судьба всего Средиземья.',
             'poster_path' => 'img/film1.png',
-            'card_path' => 'img/prew/640x360.webp',
-            'hero_path' => 'img/filmPage.jpg',
+            'card_path' => 'img/film1.png',
+            'hero_path' => 'img/film1.png',
             'slider_order' => 1,
             'recommended_order' => 4,
             'new_order' => null,
@@ -244,7 +300,7 @@ function movie_seed_rows(): array
             'catalog_order' => 10,
         ],
         [
-            'slug' => 'harry-potter-and-the-philosophers-stone',
+            'slug' => 'garri-potter-i-filosofskiy-kamen',
             'title' => 'Гарри Поттер и философский камень',
             'content_type' => 'movie',
             'release_year' => 2001,
@@ -255,7 +311,7 @@ function movie_seed_rows(): array
             'age_rating' => '12+',
             'description' => 'Одиннадцатилетний Гарри узнаёт, что он волшебник, и отправляется в Хогвартс, где его ждут новые друзья, опасности и первая встреча с тёмной силой.',
             'poster_path' => 'img/film2.png',
-            'card_path' => 'img/prew/640x360 (1).webp',
+            'card_path' => 'img/film2.png',
             'hero_path' => 'img/film2.png',
             'slider_order' => 2,
             'recommended_order' => 1,
@@ -286,28 +342,28 @@ function movie_seed_rows(): array
             'catalog_order' => 30,
         ],
         [
-            'slug' => 'back-to-the-future',
+            'slug' => 'nazad-v-budushhee',
             'title' => 'Назад в будущее',
             'content_type' => 'movie',
             'release_year' => 1985,
             'rating' => 8.6,
-            'genre' => 'Фантастика',
+            'genre' => 'Фантастика / Комедия / Приключение',
             'country' => 'США',
             'duration_text' => '1 ч 56 мин',
             'age_rating' => '12+',
             'description' => 'Марти МакФлай случайно переносится в прошлое и должен исправить временную петлю, чтобы сохранить собственное будущее.',
             'poster_path' => 'img/1681387020_papik-pro-p-nazad-v-budushchee-plakat-39.jpg',
-            'card_path' => 'img/prew/468x264.webp',
+            'card_path' => 'img/1681387020_papik-pro-p-nazad-v-budushchee-plakat-39.jpg',
             'hero_path' => 'img/1681387020_papik-pro-p-nazad-v-budushchee-plakat-39.jpg',
             'slider_order' => 4,
             'recommended_order' => 5,
             'new_order' => null,
-            'editors_choice_order' => 1,
-            'for_you_order' => 1,
+            'editors_choice_order' => null,
+            'for_you_order' => null,
             'catalog_order' => 40,
         ],
         [
-            'slug' => 'money-monster',
+            'slug' => 'finansovyy-monstr',
             'title' => 'Финансовый монстр',
             'content_type' => 'movie',
             'release_year' => 2016,
@@ -318,7 +374,7 @@ function movie_seed_rows(): array
             'age_rating' => '18+',
             'description' => 'Популярное телешоу о деньгах превращается в прямой эфир под угрозой, когда обманутый инвестор захватывает студию.',
             'poster_path' => 'img/moneymonster_6.jpg',
-            'card_path' => 'img/prew/640x360 (2).webp',
+            'card_path' => 'img/moneymonster_6.jpg',
             'hero_path' => 'img/moneymonster_6.jpg',
             'slider_order' => 5,
             'recommended_order' => 6,
@@ -370,16 +426,16 @@ function movie_seed_rows(): array
             'catalog_order' => 10,
         ],
         [
-            'slug' => 'fisher',
-            'title' => 'Фишер',
+            'slug' => 'mazhor',
+            'title' => 'Мажор',
             'content_type' => 'series',
-            'release_year' => 2023,
+            'release_year' => 2014,
             'rating' => 8.0,
-            'genre' => 'Триллер',
+            'genre' => 'Детектив / Триллер / Драма',
             'country' => 'Россия',
-            'duration_text' => '1 сезон',
-            'age_rating' => '18+',
-            'description' => 'Следователи идут по следу жестокого преступника, а дело постепенно раскрывает тёмные стороны системы и самих героев.',
+            'duration_text' => '52 мин / серия',
+            'age_rating' => '16+',
+            'description' => 'Сын олигарха Игорь Соколовский после очередной выходки вынужден работать в полиции и постепенно становится настоящим следователем.',
             'poster_path' => 'img/prew/640x360 (6).webp',
             'card_path' => 'img/prew/640x360 (6).webp',
             'hero_path' => 'img/prew/640x360 (6).webp',
@@ -391,16 +447,16 @@ function movie_seed_rows(): array
             'catalog_order' => 20,
         ],
         [
-            'slug' => 'barankiny-and-the-stones-of-power',
-            'title' => 'Баранкины и камни силы',
-            'content_type' => 'series',
-            'release_year' => 2025,
+            'slug' => 'golodnye-igry-soyka-peresmeshnitsa-chast-1',
+            'title' => 'Голодные игры: Сойка-пересмешница. Часть 1',
+            'content_type' => 'movie',
+            'release_year' => 2014,
             'rating' => 7.1,
-            'genre' => 'Комедия',
-            'country' => 'Россия',
-            'duration_text' => '1 сезон',
+            'genre' => 'Фантастика / Боевик / Триллер / Приключения',
+            'country' => 'США',
+            'duration_text' => '2 ч 02 мин',
             'age_rating' => '16+',
-            'description' => 'Семья Баранкиных внезапно оказывается втянута в цепочку абсурдных приключений после находки загадочного артефакта.',
+            'description' => 'Китнисс Эвердин становится символом сопротивления и присоединяется к восстанию дистриктов против Капитолия.',
             'poster_path' => 'img/prew/640x360 (7).webp',
             'card_path' => 'img/prew/640x360 (7).webp',
             'hero_path' => 'img/prew/640x360 (7).webp',
@@ -412,16 +468,16 @@ function movie_seed_rows(): array
             'catalog_order' => 30,
         ],
         [
-            'slug' => 'others',
-            'title' => 'Другие',
-            'content_type' => 'series',
-            'release_year' => 2024,
+            'slug' => 'illyuziya-obmana-2',
+            'title' => 'Иллюзия обмана 2',
+            'content_type' => 'movie',
+            'release_year' => 2016,
             'rating' => 7.5,
-            'genre' => 'Мистика',
-            'country' => 'Россия',
-            'duration_text' => '1 сезон',
+            'genre' => 'Боевик / Триллер / Комедия / Криминал / Детектив',
+            'country' => 'США',
+            'duration_text' => '2 ч 09 мин',
             'age_rating' => '16+',
-            'description' => 'В тихом городе начинают происходить странные события, а несколько незнакомцев понимают, что их судьбы давно связаны.',
+            'description' => 'Четыре всадника возвращаются, чтобы восстановить репутацию и вывести на чистую воду технологического магната.',
             'poster_path' => 'img/prew/640x360 (8).webp',
             'card_path' => 'img/prew/640x360 (8).webp',
             'hero_path' => 'img/prew/640x360 (8).webp',
@@ -433,43 +489,169 @@ function movie_seed_rows(): array
             'catalog_order' => 40,
         ],
         [
-            'slug' => 'leila',
-            'title' => 'Лейла',
-            'content_type' => 'series',
-            'release_year' => 2025,
-            'rating' => 7.4,
-            'genre' => 'Драма',
-            'country' => 'Турция',
-            'duration_text' => '1 сезон',
+            'slug' => 'akira',
+            'title' => 'Акира',
+            'content_type' => 'movie',
+            'release_year' => 1988,
+            'rating' => 8.4,
+            'genre' => 'Аниме / Фантастика / Боевик',
+            'country' => 'Япония',
+            'duration_text' => '2 ч 04 мин',
             'age_rating' => '16+',
-            'description' => 'Молодая героиня борется за право самой выбирать своё будущее, несмотря на давление семьи, прошлого и чужих ожиданий.',
+            'description' => 'В Нео-Токио байкер Канэда пытается спасти друга Тэцуо, получившего разрушительные психические способности.',
             'poster_path' => 'img/prew/468x264.jpg',
             'card_path' => 'img/prew/468x264.jpg',
             'hero_path' => 'img/prew/468x264.jpg',
             'slider_order' => null,
-            'recommended_order' => null,
+            'recommended_order' => 8,
             'new_order' => 6,
-            'editors_choice_order' => null,
+            'editors_choice_order' => 3,
             'for_you_order' => null,
             'catalog_order' => 50,
+        ],
+        [
+            'slug' => 'priklyucheniya-paddingtona-3',
+            'title' => 'Приключения Паддингтона 3',
+            'content_type' => 'movie',
+            'release_year' => 2024,
+            'rating' => 8.4,
+            'genre' => 'Комедия / Приключения / Семейный / Детектив',
+            'country' => 'Великобритания / Франция / Япония',
+            'duration_text' => '1 ч 43 мин',
+            'age_rating' => '6+',
+            'description' => 'Паддингтон вместе с семьёй Браунов отправляется в Перу на поиски пропавшей тёти Люси.',
+            'poster_path' => 'img/prew/640x360 (9).webp',
+            'card_path' => 'img/prew/640x360 (9).webp',
+            'hero_path' => 'img/prew/640x360 (9).webp',
+            'slider_order' => null,
+            'recommended_order' => 7,
+            'new_order' => 3,
+            'editors_choice_order' => null,
+            'for_you_order' => null,
+            'catalog_order' => 60,
+        ],
+        [
+            'slug' => 'anatomiya-padeniya',
+            'title' => 'Анатомия падения',
+            'content_type' => 'movie',
+            'release_year' => 2023,
+            'rating' => 7.6,
+            'genre' => 'Драма / Триллер / Криминал',
+            'country' => 'Франция',
+            'duration_text' => '2 ч 32 мин',
+            'age_rating' => '18+',
+            'description' => 'Писательница оказывается в центре судебного разбирательства после гибели мужа в альпийском шале. Каждая деталь их отношений становится уликой.',
+            'poster_path' => 'img/prew/anatomy-of-a-fall.png',
+            'card_path' => 'img/prew/anatomy-of-a-fall.png',
+            'hero_path' => 'img/prew/anatomy-of-a-fall.png',
+            'slider_order' => null,
+            'recommended_order' => null,
+            'new_order' => 7,
+            'editors_choice_order' => 1,
+            'for_you_order' => null,
+            'catalog_order' => 70,
+        ],
+        [
+            'slug' => 'drugie-novaya-obitel',
+            'title' => 'Другие: Новая обитель',
+            'content_type' => 'movie',
+            'release_year' => 2021,
+            'rating' => 6.4,
+            'genre' => 'Хоррор / Мистика',
+            'country' => 'США',
+            'duration_text' => '1 ч 29 мин',
+            'age_rating' => '18+',
+            'description' => 'Семья переезжает в уединённый дом, надеясь начать всё сначала, но вскоре понимает, что у нового убежища есть собственные тайны.',
+            'poster_path' => 'img/prew/640x360 (2).webp',
+            'card_path' => 'img/prew/640x360 (2).webp',
+            'hero_path' => 'img/prew/640x360 (2).webp',
+            'slider_order' => null,
+            'recommended_order' => null,
+            'new_order' => 8,
+            'editors_choice_order' => null,
+            'for_you_order' => null,
+            'catalog_order' => 80,
+        ],
+        [
+            'slug' => 'leyla-zhizn-lyubov-spravedlivost',
+            'title' => 'Лейла: Жизнь, любовь, справедливость',
+            'content_type' => 'series',
+            'release_year' => 2024,
+            'rating' => 7.8,
+            'genre' => 'Драма / Мелодрама',
+            'country' => 'Турция',
+            'duration_text' => '1 сезон',
+            'age_rating' => '16+',
+            'description' => 'Лейла возвращается в город детства под новым именем, чтобы раскрыть правду о семье и встретиться лицом к лицу с прошлым.',
+            'poster_path' => 'img/prew/640x360.webp',
+            'card_path' => 'img/prew/640x360.webp',
+            'hero_path' => 'img/prew/640x360.webp',
+            'slider_order' => null,
+            'recommended_order' => null,
+            'new_order' => 9,
+            'editors_choice_order' => null,
+            'for_you_order' => null,
+            'catalog_order' => 30,
         ],
         [
             'slug' => 'gachiakuta',
             'title' => 'Гачиакута',
             'content_type' => 'series',
             'release_year' => 2025,
-            'rating' => 8.4,
-            'genre' => 'Аниме / боевик',
+            'rating' => 8.2,
+            'genre' => 'Аниме / Боевик / Фэнтези',
             'country' => 'Япония',
             'duration_text' => '1 сезон',
             'age_rating' => '16+',
-            'description' => 'Парень, выброшенный в чудовищную бездну, учится выживать среди опасных существ и сражается за шанс вернуться наверх.',
-            'poster_path' => 'img/prew/640x360 (9).webp',
-            'card_path' => 'img/prew/640x360 (9).webp',
-            'hero_path' => 'img/prew/640x360 (9).webp',
+            'description' => 'Рудо живёт на окраине небесного города. После ложного обвинения его сбрасывают в бездну, где мусор превращается в опасных чудовищ.',
+            'poster_path' => 'img/prew/640x360 (1).webp',
+            'card_path' => 'img/prew/640x360 (1).webp',
+            'hero_path' => 'img/prew/640x360 (1).webp',
             'slider_order' => null,
             'recommended_order' => null,
-            'new_order' => 3,
+            'new_order' => 10,
+            'editors_choice_order' => null,
+            'for_you_order' => null,
+            'catalog_order' => 40,
+        ],
+        [
+            'slug' => 'kuhnya',
+            'title' => 'Кухня',
+            'content_type' => 'series',
+            'release_year' => 2012,
+            'rating' => 8.2,
+            'genre' => 'Комедия',
+            'country' => 'Россия',
+            'duration_text' => '6 сезонов',
+            'age_rating' => '16+',
+            'description' => 'Молодой повар Максим Лавров устраивается в модный московский ресторан и узнаёт, что за закрытыми дверями кухни кипят нешуточные страсти.',
+            'poster_path' => 'img/prew/640x360 (5).webp',
+            'card_path' => 'img/prew/640x360 (5).webp',
+            'hero_path' => 'img/prew/640x360 (5).webp',
+            'slider_order' => null,
+            'recommended_order' => null,
+            'new_order' => 11,
+            'editors_choice_order' => null,
+            'for_you_order' => null,
+            'catalog_order' => 50,
+        ],
+        [
+            'slug' => 'tri-kota',
+            'title' => 'Три кота',
+            'content_type' => 'series',
+            'release_year' => 2015,
+            'rating' => 8.1,
+            'genre' => 'Мультфильм / Семейный',
+            'country' => 'Россия',
+            'duration_text' => '10 сезонов',
+            'age_rating' => '0+',
+            'description' => 'Коржик, Компот и Карамелька каждый день находят повод для нового приключения и вместе учатся дружбе, заботе и воображению.',
+            'poster_path' => 'img/prew/468x264.webp',
+            'card_path' => 'img/prew/468x264.webp',
+            'hero_path' => 'img/prew/468x264.webp',
+            'slider_order' => null,
+            'recommended_order' => null,
+            'new_order' => 12,
             'editors_choice_order' => null,
             'for_you_order' => null,
             'catalog_order' => 60,
@@ -697,13 +879,12 @@ function fetch_catalog_filter_options(string $contentType): array
     $years = [];
 
     foreach ($movies as $movie) {
-        $genre = trim((string) ($movie['genre'] ?? ''));
         $country = trim((string) ($movie['country'] ?? ''));
         $director = trim((string) ($movie['director'] ?? ''));
         $year = (int) ($movie['release_year'] ?? 0);
 
-        if ($genre !== '') {
-            $genres[$genre] = $genre;
+        foreach (movie_split_genres((string) ($movie['genre'] ?? '')) as $genre) {
+            $genres[mb_strtolower($genre, 'UTF-8')] = $genre;
         }
 
         if ($country !== '') {
@@ -795,7 +976,7 @@ function apply_catalog_filters(array $movies, array $filters): array
     $filtered = array_values(array_filter(
         $movies,
         static function (array $movie) use ($genre, $year, $country, $director): bool {
-            if ($genre !== '' && (string) ($movie['genre'] ?? '') !== $genre) {
+            if ($genre !== '' && !movie_has_genre($movie, $genre)) {
                 return false;
             }
 

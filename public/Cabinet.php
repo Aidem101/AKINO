@@ -25,7 +25,7 @@ require __DIR__ . '/includes/page-top.php';
     <a href="Cabinet.php?tab=history" class="nav-item" data-target="tab-history">История просмотров</a>
     <a href="Cabinet.php?tab=favorites" class="nav-item" data-target="tab-favorites">Избранное</a>
     <a href="Cabinet.php?tab=notifications" class="nav-item" data-target="tab-notifications">Уведомления</a>
-    <a href="logout.php" class="nav-item logout">Выйти</a>
+    <a href="logout.php?csrf=<?= htmlspecialchars(akino_csrf_token(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" class="nav-item logout">Выйти</a>
   </nav>
 
   <div class="content-area">
@@ -34,8 +34,13 @@ require __DIR__ . '/includes/page-top.php';
     <div id="tab-profile" class="tab-content active">
       <h1 class="page-title">Личный кабинет</h1>
       <div class="profile-card">
-        <div class="avatar-wrapper">
-          <img src="img/people/image_2025-11-10_00-02-43.png" alt="Avatar" class="avatar-img">
+        <div class="avatar-panel">
+          <div class="avatar-wrapper">
+            <img src="<?= akino_escape(akino_default_avatar_path()) ?>" alt="Avatar" class="avatar-img">
+          </div>
+          <input id="profileAvatar" type="file" class="avatar-upload-input" accept="image/jpeg,image/png,image/webp">
+          <label for="profileAvatar" class="avatar-upload-btn">Загрузить аватарку</label>
+          <p class="avatar-upload-hint" id="avatarUploadHint">JPG, PNG или WEBP до 2 МБ</p>
         </div>
 
         <div class="user-details" id="userDetails">
@@ -120,21 +125,13 @@ require __DIR__ . '/includes/page-top.php';
 <section class="film-mini">
   <h1>Рекомендуем</h1>
 
-  <div class="mini-track">
-    <?php foreach ($recommendedMovies as $movie): ?>
-      <?php render_mini_card($movie); ?>
-    <?php endforeach; ?>
-  </div>
+  <?php render_mini_track($recommendedMovies); ?>
 </section>
 
 <section class="film-mini">
   <h1>Новое</h1>
 
-  <div class="mini-track">
-    <?php foreach ($newMovies as $movie): ?>
-      <?php render_mini_card($movie); ?>
-    <?php endforeach; ?>
-  </div>
+  <?php render_mini_track($newMovies); ?>
 </section>
 
 <section class="film-select">
@@ -177,5 +174,5 @@ require __DIR__ . '/includes/page-top.php';
 </section>
 
 <?php require __DIR__ . '/includes/footer.php'; ?>
-<script src="js/cabinet.js?v=20260413-1"></script>
+<script src="js/cabinet.js?v=20260619-2"></script>
 <?php require __DIR__ . '/includes/page-bottom.php'; ?>

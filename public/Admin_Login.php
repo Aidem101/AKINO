@@ -12,7 +12,7 @@ if (admin_current_account()) {
 }
 
 $escape = static fn (?string $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-$assetVersion = '20260413-1';
+$assetVersion = '20260614-1';
 $pageTitle = 'Вход в админку AKINO';
 $loginValue = '';
 $errorMessage = null;
@@ -36,7 +36,11 @@ try {
         $csrfToken = $_POST['csrf_token'] ?? null;
 
         if (!admin_verify_csrf_token(is_string($csrfToken) ? $csrfToken : null)) {
+            security_event_log('csrf_rejected', 'warning', 'admin', null, admin_normalize_login($loginValue));
             $errorMessage = 'Сессия входа устарела. Обновите страницу и попробуйте снова.';
+        } elseif (admin_login_rate_limited()) {
+            security_event_log('admin_login_blocked', 'warning', 'admin', null, admin_normalize_login($loginValue));
+            $errorMessage = 'Слишком много попыток входа. Попробуйте снова через некоторое время.';
         } elseif (!admin_login_attempt($loginValue, $password)) {
             $errorMessage = 'Неверный логин или пароль.';
         } else {
@@ -46,7 +50,8 @@ try {
         }
     }
 } catch (Throwable $exception) {
-    $errorMessage = $exception->getMessage();
+    akino_log_exception($exception);
+    $errorMessage = 'Не удалось выполнить вход. Попробуйте позже.';
 }
 ?>
 <!DOCTYPE html>
@@ -87,12 +92,12 @@ try {
 
         <label class="admin-field admin-field-full">
           <span>Логин</span>
-          <input type="text" name="login" value="<?= $escape($loginValue) ?>" autocomplete="username" required>
+          <input type="text" name="login" value="<?= $escape($loginValue) ?>" autocomplete="username" maxlength="60" required>
         </label>
 
         <label class="admin-field admin-field-full">
           <span>Пароль</span>
-          <input type="password" name="password" autocomplete="current-password" required>
+          <input type="password" name="password" autocomplete="current-password" maxlength="128" required>
         </label>
 
         <div class="admin-login-actions">

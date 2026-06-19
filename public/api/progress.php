@@ -20,8 +20,9 @@ try {
     $input = request_input();
     $movieId = (int) ($input['movieId'] ?? 0);
     $episodeId = (int) ($input['episodeId'] ?? 0);
-    $positionSeconds = max(0, (int) ($input['positionSeconds'] ?? 0));
-    $durationSeconds = max(0, (int) ($input['durationSeconds'] ?? 0));
+    $maxPlaybackSeconds = 60 * 60 * 24 * 7;
+    $positionSeconds = min($maxPlaybackSeconds, max(0, (int) ($input['positionSeconds'] ?? 0)));
+    $durationSeconds = min($maxPlaybackSeconds, max(0, (int) ($input['durationSeconds'] ?? 0)));
     $context = $movieId > 0 ? resolve_playback_context($movieId, $episodeId > 0 ? $episodeId : null) : null;
 
     if ($context === null) {

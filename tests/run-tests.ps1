@@ -74,6 +74,124 @@ function Invoke-HttpCheck([string] $Path, [string] $Name) {
     Write-Host "OK HTTP $($response.StatusCode) $Name"
 }
 
+function Assert-HttpStatus(
+    [scriptblock] $Request,
+    [int] $ExpectedStatus,
+    [string] $Name
+) {
+    try {
+        $response = & $Request
+        $actualStatus = [int] $response.StatusCode
+    } catch {
+        $errorResponse = $_.Exception.Response
+
+        if ($null -eq $errorResponse) {
+            throw
+        }
+
+        $actualStatus = [int] $errorResponse.StatusCode
+    }
+
+    if ($actualStatus -ne $ExpectedStatus) {
+        throw "$Name returned HTTP $actualStatus, expected $ExpectedStatus"
+    }
+
+    Write-Host "OK HTTP $actualStatus $Name"
+}
+
+function Invoke-SecurityHttpChecks {
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $homeResponse = Invoke-WebRequest -Uri "$BaseUrl/Home.php" -UseBasicParsing -WebSession $session -TimeoutSec 20
+
+    foreach ($header in @{
+        "X-Content-Type-Options" = "nosniff"
+        "X-Frame-Options" = "DENY"
+        "Referrer-Policy" = "no-referrer"
+    }.GetEnumerator()) {
+        if ([string] $homeResponse.Headers[$header.Key] -ne $header.Value) {
+            throw "Security header $($header.Key) is missing or invalid"
+        }
+    }
+
+    $contentSecurityPolicy = [string] $homeResponse.Headers["Content-Security-Policy"]
+
+    foreach ($directive in @("default-src 'self'", "script-src 'self' 'nonce-", "script-src-attr 'none'", "style-src-attr 'none'")) {
+        if (-not $contentSecurityPolicy.Contains($directive)) {
+            throw "Content-Security-Policy is missing directive: $directive"
+        }
+    }
+
+    if ($contentSecurityPolicy.Contains("'unsafe-inline'")) {
+        throw "Content-Security-Policy still allows unsafe-inline"
+    }
+
+    if ($null -ne $homeResponse.Headers["X-Powered-By"]) {
+        throw "X-Powered-By header discloses the PHP version"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace([string] $homeResponse.Headers["Server"])) {
+        Write-Host "INFO Server header is controlled by the web server: $($homeResponse.Headers["Server"])"
+    }
+
+    if (-not ([string] $homeResponse.Content).Contains("integrity=`"sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0`"")) {
+        throw "Font Awesome stylesheet is missing its integrity attribute"
+    }
+
+    $faviconResponse = Invoke-WebRequest -Uri "$BaseUrl/favicon.svg" -UseBasicParsing -WebSession $session -TimeoutSec 20
+
+    if ([string] $faviconResponse.Headers["X-Content-Type-Options"] -ne "nosniff") {
+        throw "Static assets are missing X-Content-Type-Options"
+    }
+
+    $xssPayload = 'series"><svg/onload=alert(document.domain)>'
+    $xssUrl = "$BaseUrl/Catalog.php?type=$([Uri]::EscapeDataString($xssPayload))"
+    $xssResponse = Invoke-WebRequest -Uri $xssUrl -UseBasicParsing -WebSession $session -TimeoutSec 20
+
+    foreach ($marker in @($xssPayload, "<svg/onload", "<script>alert")) {
+        if ([string] $xssResponse.Content -like "*$marker*") {
+            throw "Catalog reflected a potentially executable XSS payload"
+        }
+    }
+
+    $csrfMatch = [regex]::Match(
+        [string] $homeResponse.Content,
+        '<meta\s+name="csrf-token"\s+content="([^"]+)"'
+    )
+
+    if (-not $csrfMatch.Success) {
+        throw "CSRF token meta tag was not found on Home"
+    }
+
+    $csrfToken = $csrfMatch.Groups[1].Value
+    $postHeaders = @{
+        "X-Requested-With" = "XMLHttpRequest"
+    }
+
+    Assert-HttpStatus -ExpectedStatus 403 -Name "API rejects missing CSRF token" -Request {
+        Invoke-WebRequest `
+            -Uri "$BaseUrl/api/request-code.php" `
+            -UseBasicParsing `
+            -WebSession $session `
+            -Method Post `
+            -Headers $postHeaders `
+            -Body @{ phone = "invalid" } `
+            -TimeoutSec 20
+    }
+
+    $postHeaders["X-CSRF-Token"] = $csrfToken
+
+    Assert-HttpStatus -ExpectedStatus 422 -Name "API accepts valid CSRF token" -Request {
+        Invoke-WebRequest `
+            -Uri "$BaseUrl/api/request-code.php" `
+            -UseBasicParsing `
+            -WebSession $session `
+            -Method Post `
+            -Headers $postHeaders `
+            -Body @{ phone = "invalid" } `
+            -TimeoutSec 20
+    }
+}
+
 function Save-PhpServerLogs($ServerProcess, [string] $StdoutPath, [string] $StderrPath) {
     if ($null -eq $ServerProcess) {
         return
@@ -135,7 +253,7 @@ $server = $null
 try {
     if ($OwnHttpServer) {
         Write-Step "Start PHP HTTP server"
-        $serverArguments = '-d "session.save_path=' + $SessionDir + '" -S 127.0.0.1:' + $Port + ' -t "' + (Join-Path $ProjectRoot "public") + '"'
+        $serverArguments = '-d "session.save_path=' + $SessionDir + '" -S 127.0.0.1:' + $Port + ' -t "' + (Join-Path $ProjectRoot "public") + '" "' + (Join-Path $ProjectRoot "tests\zap\router.php") + '"'
         $serverStartInfo = New-Object System.Diagnostics.ProcessStartInfo
         $serverStartInfo.FileName = $Php
         $serverStartInfo.Arguments = $serverArguments
@@ -189,6 +307,9 @@ try {
     foreach ($page in $pages) {
         Invoke-HttpCheck -Path $page.Path -Name $page.Name
     }
+
+    Write-Step "HTTP security checks"
+    Invoke-SecurityHttpChecks
 
     if (-not $SkipVisual) {
         Assert-File $Chrome "Chrome"

@@ -14,3 +14,5 @@ Thumbs.db
 /vendor/
 /node_modules/
 /.npm-cache/
+/storage/backups/*
+!/storage/backups/.gitignore
